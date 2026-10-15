@@ -1,3 +1,7 @@
+- always put guidelines in AGENTS.md, not CLAUDE.md. CLAUDE.md is a symlink to it.
+- same for .agents/skills. always put skills there. .claude/skills symlinks to it.
+- always use conventional commits
+
 # AGENTS.md
 
 DBDelve is a native database client in Rust on GPUI for macOS, Linux and Windows,
