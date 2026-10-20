@@ -3117,6 +3117,12 @@ pub(crate) enum Stop {
     Confirm(Destructive),
     /// dbdelve could not read it. Runs once on confirmation and changes nothing.
     RunOnce,
+    /// Safe updates is on and this writes. Asked every time: there is no
+    /// "don't ask again" to tick, since asking every time is the setting.
+    ConfirmWrite,
+    /// Safe updates is on and this destroys something. Runs only once the
+    /// confirmation phrase is typed, whatever the connection has silenced.
+    TypePhrase(Destructive),
 }
 
 /// Whether the mode stops this statement. `None` means run it.
@@ -3149,6 +3155,29 @@ pub(crate) fn gate(verdict: &Verdict, mode: Mode, confirmed: &[Destructive]) -> 
         .find(|kind| !confirmed.contains(kind))
         .copied()
         .map(Stop::Confirm)
+}
+
+/// `gate`, plus what a connection with safe updates on asks on top of it.
+///
+/// Safe updates only ever adds a question. Every stop `gate` raises is still
+/// raised, a mode shortfall first; past that, a write that `gate` would run is
+/// asked about, and a destructive kind asks for the typed phrase rather than a
+/// click. The silenced list is ignored, because a tick from before safe updates
+/// was turned on is not an answer to the stricter question.
+pub(crate) fn guard(
+    verdict: &Verdict,
+    mode: Mode,
+    confirmed: &[Destructive],
+    safe_updates: bool,
+) -> Option<Stop> {
+    if !safe_updates {
+        return gate(verdict, mode, confirmed);
+    }
+    match gate(verdict, mode, &[]) {
+        Some(Stop::Confirm(kind)) => Some(Stop::TypePhrase(kind)),
+        None if verdict.mode > Mode::ReadOnly => Some(Stop::ConfirmWrite),
+        stop => stop,
+    }
 }
 
 /// `sql` laid out over several lines: the same tokens, indented. Refused when
@@ -6410,6 +6439,43 @@ mod tests {
         assert_eq!(
             gate(&drop, Mode::Full, &[Destructive::Truncate]),
             Some(Stop::Confirm(Destructive::Drop))
+        );
+    }
+
+    #[test]
+    fn safe_updates_asks_about_every_write_and_wants_a_phrase_for_destruction() {
+        let read = classify(Engine::Postgres, "SELECT * FROM t");
+        let write = classify(Engine::Postgres, "UPDATE t SET a = 1 WHERE id = 1");
+        let delete_all = classify(Engine::Postgres, "DELETE FROM t");
+
+        assert_eq!(guard(&read, Mode::Full, &[], true), None);
+        assert_eq!(
+            guard(&write, Mode::ReadWrite, &[], true),
+            Some(Stop::ConfirmWrite)
+        );
+        assert_eq!(guard(&write, Mode::ReadWrite, &[], false), None);
+        // The mode is still asked about first, and nothing else alongside it.
+        assert_eq!(
+            guard(&delete_all, Mode::ReadWrite, &[], true),
+            Some(Stop::Upgrade(Mode::Full))
+        );
+        assert_eq!(
+            guard(&delete_all, Mode::Full, &[], true),
+            Some(Stop::TypePhrase(Destructive::UnfilteredDelete))
+        );
+        // A kind silenced before safe updates was turned on still asks.
+        assert_eq!(
+            guard(
+                &delete_all,
+                Mode::Full,
+                &[Destructive::UnfilteredDelete],
+                true
+            ),
+            Some(Stop::TypePhrase(Destructive::UnfilteredDelete))
+        );
+        assert_eq!(
+            guard(&classify(Engine::Postgres, "selec"), Mode::Full, &[], true),
+            Some(Stop::RunOnce)
         );
     }
 

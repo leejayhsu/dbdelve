@@ -57,6 +57,9 @@ pub(crate) struct Profile {
     /// restored from an earlier session. Stored as [`STALE_ROWS`] among
     /// `confirmed`'s slugs, which a build without it drops as unknown.
     pub(crate) confirmed_stale: bool,
+    /// Every write asks before it runs, and a destructive one only runs once
+    /// the confirmation phrase is typed (`sql::guard`).
+    pub(crate) safe_updates: bool,
     pub(crate) generation: u64,
     pub(crate) state: ProfileState,
     /// Whether the user's statements on this connection have left a
@@ -118,6 +121,19 @@ impl Profile {
             .clone()
             .or_else(|| self.config.database_name())
             .or_else(|| opened.map(str::to_string))
+    }
+
+    /// What stops `verdict` on this connection, read the same way wherever it
+    /// is asked so the prompt raised, the prompt drawn and the prompt answered
+    /// agree. `reviewed` is a statement already on screen behind a Run the user
+    /// pressed, which safe updates has nothing to add to.
+    pub(crate) fn stop(&self, verdict: &Verdict, reviewed: bool) -> Option<sql::Stop> {
+        sql::guard(
+            verdict,
+            self.mode,
+            &self.confirmed,
+            self.safe_updates && !reviewed,
+        )
     }
 
     pub(crate) fn connection(&self) -> Option<Connection> {
@@ -204,6 +220,7 @@ impl Profile {
                 .chain(self.confirmed_stale.then_some(STALE_ROWS))
                 .map(str::to_string)
                 .collect(),
+            safe_updates: self.safe_updates,
             // Nothing writes the legacy scalar any more; a buffer's name is a
             // property of its tab now. Kept on the stored shape only so a
             // profile written by an older build still loads with its buffer.
@@ -303,6 +320,12 @@ pub(crate) struct Session {
     pub(crate) import_rows: Option<ImportDialog>,
     /// The statement the mode check stopped, held until the user answers.
     pub(crate) pending_run: Option<PendingRun>,
+    /// Where the confirmation phrase is typed, for a `Stop::TypePhrase`.
+    pub(crate) phrase_input: Entity<InputState>,
+    /// Set when a phrase prompt is raised, so the next frame empties the field
+    /// and focuses it: raising one happens where there is no window to do
+    /// either with.
+    pub(crate) phrase_needs_focus: bool,
     /// The query tab whose queue stopped on a failed statement, held until
     /// the user says whether the rest of it still runs. Nothing after the
     /// failure is sent from here without an explicit Continue.
@@ -517,6 +540,48 @@ pub(crate) struct PendingRun {
     pub(crate) verdict: Verdict,
     /// The "don't ask again" tick, which only the Confirm shape shows.
     pub(crate) dont_ask: bool,
+    /// See `Profile::stop`.
+    pub(crate) reviewed: bool,
+    /// What a `Stop::TypePhrase` asks to be typed. Chosen when the prompt is
+    /// raised and kept with it, so it does not change under the user's typing.
+    pub(crate) phrase: &'static str,
+}
+
+/// The phrases a destructive statement asks to be typed under safe updates.
+/// Words rather than "yes" or the table's name, so it cannot be typed from
+/// habit or pasted from the statement above it.
+pub(crate) const CONFIRM_PHRASES: [&str; 20] = [
+    "blueberry-airplane",
+    "quiet-meadow",
+    "rusty-lantern",
+    "silver-harbor",
+    "misty-canyon",
+    "amber-falcon",
+    "frosty-orchard",
+    "velvet-thunder",
+    "crimson-pebble",
+    "gentle-glacier",
+    "hollow-comet",
+    "lucky-walrus",
+    "mellow-tundra",
+    "nimble-otter",
+    "purple-volcano",
+    "sunny-tortoise",
+    "winter-cactus",
+    "golden-kettle",
+    "sleepy-lighthouse",
+    "wandering-pine",
+];
+
+/// One of [`CONFIRM_PHRASES`], a different pick each time. `RandomState` is
+/// seeded per process and moves on with each one made, which is all the
+/// randomness a prompt needs and saves a dependency.
+pub(crate) fn confirm_phrase() -> &'static str {
+    use std::hash::{BuildHasher, Hasher};
+    let pick = std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish();
+    CONFIRM_PHRASES[(pick % CONFIRM_PHRASES.len() as u64) as usize]
 }
 
 /// The `confirmed` slug that silences [`StaleEdit`]'s prompt.
@@ -575,6 +640,18 @@ impl Session {
                 if matches!(event, InputEvent::PressEnter { .. }) {
                     workspace.confirm_save(window, cx);
                 }
+            },
+        )
+        .detach();
+
+        let phrase_input = cx.new(|cx| InputState::new(window, cx));
+        cx.subscribe(
+            &phrase_input,
+            |workspace, _, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => workspace.approve_pending_run(cx),
+                // The Run button is enabled by what is typed.
+                InputEvent::Change => cx.notify(),
+                _ => {}
             },
         )
         .detach();
@@ -648,6 +725,8 @@ impl Session {
             insert_form: None,
             import_rows: None,
             pending_run: None,
+            phrase_input,
+            phrase_needs_focus: false,
             queue_failure: None,
             stale_edit: None,
             structure_requests: HashMap::new(),
@@ -1005,8 +1084,9 @@ impl Session {
 /// grid are all focusable and no two of them share a type.
 pub(crate) enum Focus {
     Buffer(Entity<EditorState>),
-    /// A single-line field — the save-name prompt. Not an [`EditorState`]:
-    /// gpui-component 0.8 splits the code editor off from the plain input.
+    /// A single-line field — the save-name or confirmation-phrase prompt.
+    /// Not an [`EditorState`]: gpui-component 0.8 splits the code editor off
+    /// from the plain input.
     Field(Entity<InputState>),
     Grid(Entity<TableState<ResultGrid>>),
     /// The window itself, for a surface with nothing in it to type into. Not a
@@ -2489,6 +2569,25 @@ mod tests {
         );
         drop_review_of(&mut slot, Tab::Object(1));
         assert!(slot.is_none());
+    }
+
+    /// A phrase has to be typeable as shown and tellable from its neighbours,
+    /// or the prompt asks for something nobody can enter.
+    #[test]
+    fn every_confirm_phrase_is_distinct_lowercase_words_joined_by_a_hyphen() {
+        let mut seen = std::collections::HashSet::new();
+        for phrase in CONFIRM_PHRASES {
+            assert!(seen.insert(phrase), "{phrase} twice");
+            let words = phrase.split('-').collect::<Vec<_>>();
+            assert_eq!(words.len(), 2, "{phrase}");
+            assert!(
+                words
+                    .iter()
+                    .all(|word| !word.is_empty() && word.chars().all(|c| c.is_ascii_lowercase())),
+                "{phrase}"
+            );
+        }
+        assert!(CONFIRM_PHRASES.contains(&confirm_phrase()));
     }
 
     #[test]

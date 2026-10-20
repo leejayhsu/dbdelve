@@ -1201,10 +1201,29 @@ impl Render for Workspace {
         // form's field is focused first, and the tab's focus after it would
         // take it -- which is what closing the palette asks for just before a
         // row of it opens the form. The ask waits for the form to close.
+        //
+        // The phrase field is emptied here rather than where the prompt is
+        // raised, which has no window to do it with, so a new prompt never
+        // opens on the last one's typing.
+        if let Some(input) = self
+            .profile()
+            .filter(|profile| profile.session.phrase_needs_focus)
+            .map(|profile| profile.session.phrase_input.clone())
+        {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
         let form_open = self.form.is_some();
         let take_focus = self.profile_mut().and_then(|profile| {
             if form_open {
                 return None;
+            }
+            // Ahead of the tab, which would otherwise take focus back from the
+            // field on the next frame.
+            if std::mem::take(&mut profile.session.phrase_needs_focus)
+                && profile.session.pending_run.is_some()
+            {
+                profile.session.editor_needs_focus = false;
+                return Some(Focus::Field(profile.session.phrase_input.clone()));
             }
             if profile.session.naming {
                 let wanted = profile.session.save_name_needs_focus;

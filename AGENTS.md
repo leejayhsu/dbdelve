@@ -143,6 +143,18 @@ server, and how `IF` conditions and `CycleMode` are read, are in
   the mode only while creating: editing never changes one.
 - `Workspace::set_mode` is the only place a mode changes; it also pushes the
   mode into every open grid, which caches it.
+- **Safe updates is a per-profile switch on top of the mode, and only ever
+  adds a question.** `sql::guard` is `sql::gate` with it: every stop the gate
+  raises still comes first, a mode shortfall included; then any statement
+  whose verdict is above Read-only asks before it runs (`Stop::ConfirmWrite`),
+  and a `Destructive` kind (DROP, TRUNCATE, DELETE without WHERE) runs only
+  once one of `session::CONFIRM_PHRASES`, picked at random when the prompt is
+  raised, is typed (`Stop::TypePhrase`). The silenced list is ignored under
+  it, and neither prompt offers "don't ask again". `Profile::stop` is the one
+  call that reads it, so raising, drawing and answering the prompt agree. The
+  one write it does not ask about is a relation tab's apply review, whose Run
+  the user just pressed on the same statement (`PendingRun::reviewed`).
+  Unlike the mode it is set from the connection form, new or edited.
 - `Connection::set_read_only` holds a Read-only session to reads on the server
   where the engine has such a setting. It is a backstop, not the boundary:
   `sql::gate` is. A write-less role is the only real privilege boundary.

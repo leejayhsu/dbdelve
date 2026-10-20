@@ -269,7 +269,7 @@ pub(crate) fn admitted(
     match sql::gate(&sql::classify(engine, sql), mode, confirmed) {
         None => Ok(()),
         Some(Stop::Upgrade(_)) => Err("Read-only does not allow the import's writes.".into()),
-        Some(Stop::Confirm(_) | Stop::RunOnce) => {
+        Some(Stop::Confirm(_) | Stop::RunOnce | Stop::ConfirmWrite | Stop::TypePhrase(_)) => {
             Err("DBDelve refused to run a statement it wrote itself.".into())
         }
     }

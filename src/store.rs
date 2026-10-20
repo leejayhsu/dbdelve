@@ -130,6 +130,10 @@ pub struct StoredProfile {
     /// kind simply keeps asking, which is the safe direction.
     #[serde(default)]
     pub confirmed: Vec<String>,
+    /// `session::Profile::safe_updates`. Absent is a profile written before it
+    /// existed, and reads back as off, which is how it has always run.
+    #[serde(default)]
+    pub safe_updates: bool,
     /// The name of the one query buffer a profile had, before a profile could
     /// have several. Read only: nothing writes it any more, and it is kept
     /// because every profile on disk today carries its open query here and
@@ -2348,6 +2352,7 @@ user = "shayan"
             let profile = &profiles[0];
             assert_eq!(profile.mode, None);
             assert!(profile.confirmed.is_empty());
+            assert!(!profile.safe_updates);
         });
     }
 
@@ -2418,6 +2423,7 @@ user = "shayan"
                 color: None,
                 mode: Some("full".into()),
                 confirmed: vec!["drop".into(), "truncate".into()],
+                safe_updates: true,
                 open_query: None,
                 ssh: None,
                 open_queries: Vec::new(),
@@ -2468,6 +2474,7 @@ user = "shayan"
             color: None,
             mode: None,
             confirmed: Vec::new(),
+            safe_updates: false,
             open_query: Some("daily".into()),
             ssh: None,
             open_queries: Vec::new(),
@@ -2596,6 +2603,7 @@ open_objects = []
             color: None,
             mode: None,
             confirmed: Vec::new(),
+            safe_updates: false,
             open_query: None,
             ssh: None,
             open_queries: Vec::new(),
@@ -2721,6 +2729,7 @@ open_objects = []
             color: Some(ConnectionColor::Purple.slug().to_string()),
             mode: None,
             confirmed: Vec::new(),
+            safe_updates: false,
             open_query: None,
             ssh: None,
             open_queries: Vec::new(),
@@ -2795,6 +2804,7 @@ open_objects = []
             color: None,
             mode: None,
             confirmed: Vec::new(),
+            safe_updates: false,
             open_query: None,
             ssh: None,
             open_queries: Vec::new(),
@@ -2855,6 +2865,7 @@ open_objects = []
             color: None,
             mode: None,
             confirmed: Vec::new(),
+            safe_updates: false,
             open_query: None,
             ssh: None,
             open_queries: Vec::new(),
@@ -2962,6 +2973,7 @@ open_objects = []
             color: None,
             mode: None,
             confirmed: Vec::new(),
+            safe_updates: false,
             open_query: None,
             ssh: None,
             open_queries: Vec::new(),
@@ -3083,6 +3095,7 @@ open_objects = []
                     color: None,
                     mode: None,
                     confirmed: Vec::new(),
+                    safe_updates: false,
                     open_query: None,
                     ssh: None,
                     open_queries: Vec::new(),
@@ -3113,6 +3126,7 @@ open_objects = []
                     color: None,
                     mode: None,
                     confirmed: Vec::new(),
+                    safe_updates: false,
                     open_query: None,
                     ssh: None,
                     open_queries: Vec::new(),
@@ -3479,6 +3493,7 @@ open_objects = []
             color: None,
             mode: None,
             confirmed: Vec::new(),
+            safe_updates: false,
             open_query: Some("daily".into()),
             ssh: None,
             open_queries: vec![
@@ -3907,6 +3922,7 @@ name = \"accounts\"
             color: None,
             mode: None,
             confirmed: Vec::new(),
+            safe_updates: false,
             open_query: None,
             ssh: None,
             open_queries: Vec::new(),
@@ -4017,6 +4033,7 @@ name = \"accounts\"
             color: None,
             mode: None,
             confirmed: Vec::new(),
+            safe_updates: false,
             open_query: None,
             ssh: None,
             open_queries: Vec::new(),

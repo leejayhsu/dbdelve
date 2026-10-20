@@ -47,6 +47,7 @@ database = "app"
 user = "ada"
 editor_font_size = 14.0
 confirmed = []
+safe_updates = false
 open_query = "daily"
 open_queries = []
 open_objects = []
@@ -70,6 +71,7 @@ confirmed = [
     "drop",
     "stale-rows",
 ]
+safe_updates = false
 
 [profiles.ssh]
 host = "bastion.internal"
@@ -155,6 +157,7 @@ database = "postgres"
 user = "postgres"
 engine = "postgresql"
 confirmed = []
+safe_updates = false
 open_queries = []
 open_objects = []
 
@@ -170,6 +173,7 @@ engine = "mysql"
 statement_timeout = 0
 color = "orange"
 confirmed = []
+safe_updates = false
 open_queries = []
 
 [[profiles.open_objects]]
@@ -198,6 +202,7 @@ sslmode = "prefer"
 engine = "mariadb"
 mode = "full"
 confirmed = ["unfiltered-delete"]
+safe_updates = false
 open_queries = []
 open_objects = []
 
@@ -212,6 +217,7 @@ path = "/Users/ada/data/app.sqlite"
 statement_timeout = 10
 next_query_id = 1
 confirmed = []
+safe_updates = false
 
 [[profiles.open_queries]]
 id = 0
@@ -251,6 +257,7 @@ user = ""
 engine = "turso"
 path = "/Users/ada/data/edge.db"
 confirmed = []
+safe_updates = false
 open_queries = []
 open_objects = []
 
@@ -265,6 +272,7 @@ path = "/Users/ada/data/lake.duckdb"
 schema = "analytics"
 statement_timeout = 60
 confirmed = []
+safe_updates = false
 open_queries = []
 open_objects = []
 
@@ -283,6 +291,7 @@ schema = "PUBLIC"
 statement_timeout = 120
 color = "purple"
 confirmed = []
+safe_updates = false
 open_queries = []
 open_objects = []
 
@@ -298,6 +307,7 @@ root_certificate = "/certs/mssql.pem"
 engine = "mssql"
 schema = "dbo"
 confirmed = []
+safe_updates = false
 open_queries = []
 open_objects = []
 
@@ -313,6 +323,7 @@ srv = true
 options = "retryWrites=true&w=majority"
 login_database = "admin"
 confirmed = []
+safe_updates = false
 open_queries = []
 open_objects = []
 
@@ -327,5 +338,6 @@ sslmode = "disable"
 engine = "redis"
 color = "red"
 confirmed = []
+safe_updates = false
 open_queries = []
 open_objects = []
