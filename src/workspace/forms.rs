@@ -2077,10 +2077,30 @@ impl Workspace {
                     .flex_shrink_0()
                     .flex()
                     .items_center()
-                    .px(px(layout::SPACE_MD))
+                    .justify_between()
+                    .pl(px(layout::SPACE_MD))
+                    .pr(px(layout::SPACE_XS))
                     .border_b_1()
                     .border_color(t.border)
-                    .child(section_label(t, "Queries")),
+                    .child(section_label(t, "Queries"))
+                    // Only while there is a folder to close: with none, the
+                    // button would be a control that does nothing.
+                    .children(self.library.iter().any(|name| name.contains('/')).then(|| {
+                        let workspace = cx.entity().downgrade();
+                        icon_button(
+                            "collapse-library",
+                            icon::COLLAPSE_ALL,
+                            Tone::Quiet,
+                            Control::Inline,
+                            t,
+                        )
+                        .tooltip("Collapse all folders")
+                        .on_click(move |_, _, cx| {
+                            _ = workspace.update(cx, |workspace, cx| {
+                                workspace.collapse_library(cx);
+                            });
+                        })
+                    })),
             )
             .child(div().flex_1().min_h_0().child(content))
     }

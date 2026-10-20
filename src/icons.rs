@@ -22,7 +22,7 @@ use icondata_core::IconData;
 /// The gpui-component widgets ask for their own paths — those are Lucide names
 /// too, so they resolve here as well. Add a row when something asks for one;
 /// an unlisted path simply draws nothing.
-const ICONS: [(&str, &IconData); 65] = [
+const ICONS: [(&str, &IconData); 66] = [
     ("icons/git-fork.svg", icondata_lu::LuGitFork),
     ("icons/chevron-down.svg", icondata_lu::LuChevronDown),
     ("icons/chevron-right.svg", icondata_lu::LuChevronRight),
@@ -94,6 +94,7 @@ const ICONS: [(&str, &IconData); 65] = [
     ("icons/engine-sqlserver.svg", icondata_lu::LuServer),
     ("icons/engine-mongodb.svg", icondata_si::SiMongodb),
     ("icons/engine-redis.svg", icondata_si::SiRedis),
+    ("icons/chevrons-down-up.svg", icondata_lu::LuChevronsDownUp),
 ];
 
 /// dbdelve's own names for the icons it draws, so a call site names a thing
@@ -140,6 +141,9 @@ pub mod icon {
     pub const FUNCTION: &str = "icons/square-function.svg";
     pub const PROCEDURE: &str = "icons/square-play.svg";
     pub const STRUCTURE: &str = "icons/list-tree.svg";
+    /// Two chevrons pointing in, which is what closing every folder looks
+    /// like in an editor's file tree.
+    pub const COLLAPSE_ALL: &str = "icons/chevrons-down-up.svg";
     pub const PLUS: &str = "icons/plus.svg";
     pub const CHECK: &str = "icons/check.svg";
     pub const CLOSE: &str = "icons/close.svg";
@@ -289,6 +293,7 @@ mod tests {
             icon::FUNCTION,
             icon::PROCEDURE,
             icon::STRUCTURE,
+            icon::COLLAPSE_ALL,
             icon::PLUS,
             icon::CHECK,
             icon::CLOSE,

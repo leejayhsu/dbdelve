@@ -189,10 +189,11 @@ pub(crate) struct Workspace {
     /// Every saved query, by name. On the workspace rather than a session:
     /// the library is one directory, whichever connection is in front.
     pub(crate) library: Vec<String>,
-    /// The rows `library_tree` was last given. Kept because a row's open or
-    /// closed state is shared with the tree's copy, and the tree has no way
-    /// to hand its rows back -- see `refresh_library`.
-    pub(crate) library_items: Vec<gpui_component::tree::TreeItem>,
+    /// The library's folders that are closed, by path. Kept here rather than
+    /// read off the tree, which cannot hand its rows back, so a rebuild after a
+    /// save keeps them closed and a relaunch can too: it is saved with the
+    /// settings.
+    pub(crate) closed_folders: HashSet<String>,
     pub(crate) library_tree: Entity<gpui_component::tree::TreeState>,
     /// The saved query whose delete has been clicked once and is waiting for
     /// the second.
@@ -361,7 +362,7 @@ impl Workspace {
             shell_split: cx.new(|_| ResizableState::default()),
             sidebar_split: cx.new(|_| ResizableState::default()),
             library: Vec::new(),
-            library_items: Vec::new(),
+            closed_folders: HashSet::new(),
             library_tree: cx.new(|cx| gpui_component::tree::TreeState::new(cx)),
             pending_query_delete: None,
             tab_strip: crate::tab_drag::TabStrip::default(),
@@ -403,6 +404,30 @@ impl Workspace {
             focus: cx.focus_handle(),
             newer_release: None,
         };
+
+        // A folder opened or closed by hand is remembered as it happens, so
+        // quitting needs nothing of its own to keep it.
+        cx.subscribe(
+            &workspace.library_tree,
+            |workspace, _, event: &gpui_component::tree::TreeEvent, cx| {
+                use gpui_component::tree::TreeEvent;
+                let (id, closed) = match event {
+                    TreeEvent::Collapsed(id) => (id, true),
+                    TreeEvent::Expanded(id) => (id, false),
+                };
+                let Some(folder) = crate::library::folder_of(id) else {
+                    return;
+                };
+                let changed = match closed {
+                    true => workspace.closed_folders.insert(folder.to_string()),
+                    false => workspace.closed_folders.remove(folder),
+                };
+                if changed {
+                    workspace.remember_profiles(cx);
+                }
+            },
+        )
+        .detach();
 
         let mut load_failure = None;
         match store::load_profiles() {
@@ -459,6 +484,12 @@ impl Workspace {
                 workspace.settings.client_sort = stored_settings.client_sort.unwrap_or(false);
                 workspace.settings.welcomed =
                     welcome::welcomed(stored_settings.welcomed, !profiles.is_empty());
+                workspace.closed_folders = stored_settings
+                    .closed_query_folders
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect();
                 workspace.settings.custom_keybindings = stored_settings
                     .custom_keybindings
                     .clone()
