@@ -5,6 +5,12 @@ use super::*;
 use crate::session::{PendingRun, Resume};
 use crate::sql::Stop;
 
+/// Whether what was typed into a phrase prompt is the phrase. Surrounding
+/// space is forgiven, since it cannot be seen in the field; nothing else is.
+pub(crate) fn phrase_matches(typed: &str, phrase: &str) -> bool {
+    !phrase.is_empty() && typed.trim() == phrase
+}
+
 impl Workspace {
     /// The only place a connection's mode changes. Single, because a later
     /// caller (the grid's own cache, the titlebar picker) is one more thing
@@ -80,6 +86,9 @@ impl Workspace {
                 destructive: Vec::new(),
             },
             dont_ask: false,
+            // Nothing to run, so nothing for safe updates to ask about.
+            reviewed: true,
+            phrase: "",
         });
         cx.notify();
         false
@@ -129,6 +138,8 @@ impl Workspace {
             return;
         };
         let stopped = profile.session.pending_run.take();
+        // The phrase field may have held focus, and it is gone with the prompt.
+        profile.session.editor_needs_focus = true;
         // Declining a statement ends the queue it was part of: nothing after
         // a statement the user refused was asked for either. The refused
         // statement never reaches a result, so the queue has to be let go of
@@ -155,15 +166,31 @@ impl Workspace {
         let Some(profile) = self.profile_mut() else {
             return;
         };
+        let Some(pending) = &profile.session.pending_run else {
+            return;
+        };
+        // Checked before the prompt is taken, so a wrong phrase leaves it up
+        // to be typed again. Enter in the field lands here as well as Run.
+        if let Some(Stop::TypePhrase(_)) = profile.stop(&pending.verdict, pending.reviewed)
+            && !phrase_matches(
+                profile.session.phrase_input.read(cx).value().as_ref(),
+                pending.phrase,
+            )
+        {
+            return;
+        }
         let Some(PendingRun {
             resume,
             verdict,
             dont_ask,
+            reviewed,
+            phrase: _,
         }) = profile.session.pending_run.take()
         else {
             return;
         };
-        let Some(stop) = sql::gate(&verdict, profile.mode, &profile.confirmed) else {
+        profile.session.editor_needs_focus = true;
+        let Some(stop) = profile.stop(&verdict, reviewed) else {
             return;
         };
 
@@ -202,7 +229,7 @@ impl Workspace {
                 }
                 self.run_resume(resume, cx);
             }
-            Stop::RunOnce => self.run_resume(resume, cx),
+            Stop::RunOnce | Stop::ConfirmWrite | Stop::TypePhrase(_) => self.run_resume(resume, cx),
         }
     }
 
@@ -219,5 +246,21 @@ impl Workspace {
             None,
             cx,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::phrase_matches;
+
+    #[test]
+    fn only_the_phrase_itself_confirms() {
+        assert!(phrase_matches("quiet-meadow", "quiet-meadow"));
+        assert!(phrase_matches("  quiet-meadow\n", "quiet-meadow"));
+        assert!(!phrase_matches("Quiet-Meadow", "quiet-meadow"));
+        assert!(!phrase_matches("quiet meadow", "quiet-meadow"));
+        assert!(!phrase_matches("", "quiet-meadow"));
+        // A prompt with no phrase is never confirmed by typing nothing.
+        assert!(!phrase_matches("", ""));
     }
 }

@@ -1725,12 +1725,22 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let verdict = sql::classify(self.engine(), &sql);
+        // A relation tab's review panel shows this exact statement and the user
+        // pressed its Run, which is the question safe updates would ask again.
+        let reviewed = self.profile().is_some_and(|profile| {
+            profile
+                .session
+                .apply_review
+                .as_ref()
+                .is_some_and(|review| review.tab == tab && review.sql == sql)
+        });
         let stopped = self
             .profile()
-            .and_then(|profile| sql::gate(&verdict, profile.mode, &profile.confirmed));
+            .and_then(|profile| profile.stop(&verdict, reviewed));
 
-        if stopped.is_some() {
+        if let Some(stop) = stopped {
             if let Some(profile) = self.profile_mut() {
+                profile.session.phrase_needs_focus = matches!(stop, sql::Stop::TypePhrase(_));
                 profile.session.pending_run = Some(PendingRun {
                     resume: Some(Resume {
                         sql,
@@ -1741,6 +1751,8 @@ impl Workspace {
                     }),
                     verdict,
                     dont_ask: false,
+                    reviewed,
+                    phrase: crate::session::confirm_phrase(),
                 });
             }
             cx.notify();

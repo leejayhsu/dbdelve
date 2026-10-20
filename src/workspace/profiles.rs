@@ -239,6 +239,7 @@ impl Workspace {
                 .filter_map(|slug| Destructive::from_slug(slug))
                 .collect(),
             confirmed_stale: stored.confirmed.iter().any(|slug| slug == STALE_ROWS),
+            safe_updates: stored.safe_updates,
             generation: 0,
             state: ProfileState::Idle,
             in_transaction: false,
@@ -288,6 +289,7 @@ impl Workspace {
             mode,
             confirmed: Vec::new(),
             confirmed_stale: false,
+            safe_updates: false,
             generation: 0,
             state: ProfileState::Idle,
             in_transaction: false,
@@ -677,6 +679,7 @@ impl Workspace {
         };
         let color = form.color;
         let mode = form.mode;
+        let safe_updates = form.safe_updates;
         let editing = form.editing.clone();
         let typed = form
             .naming_project
@@ -723,6 +726,10 @@ impl Workspace {
         }
         match editing {
             Some(id) => {
+                // Set ahead of the save, which writes it out with the rest.
+                if let Some(profile) = self.profiles.iter_mut().find(|profile| profile.id == id) {
+                    profile.safe_updates = safe_updates;
+                }
                 self.save_profile(&id, name, config, color, window, cx);
                 if self.group_of(&id) != project.as_deref()
                     && let Some(index) = self.profiles.iter().position(|profile| profile.id == id)
@@ -733,6 +740,8 @@ impl Workspace {
             None => {
                 let index =
                     self.create_profile(name, config, color, mode, Origin::Form, window, cx);
+                self.profiles[index].safe_updates = safe_updates;
+                self.remember_profiles(cx);
                 if project.is_some() {
                     self.move_to_project(index, project.as_deref(), cx);
                 }

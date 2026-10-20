@@ -36,6 +36,9 @@ pub(crate) struct ConnectionForm {
     /// profile is connecting, and it pushes into that profile's live grids,
     /// which a profile still being typed into does not have.
     pub(crate) mode: Mode,
+    /// `Profile::safe_updates`. Unlike the mode, editable after creation: it
+    /// only ever adds a question, so nothing live has to be told it changed.
+    pub(crate) safe_updates: bool,
     /// SQLite's entire connection. No host, no credentials, no transport.
     pub(crate) path: Entity<InputState>,
     pub(crate) host: Entity<InputState>,
@@ -301,6 +304,7 @@ impl ConnectionForm {
             name,
             color: None,
             mode: starting_mode(None),
+            safe_updates: false,
             path,
             host,
             port,
@@ -355,6 +359,7 @@ impl ConnectionForm {
         let mut form = Self::new(Some(&profile.config), window, cx);
         form.editing = Some(profile.id.clone());
         form.color = profile.color;
+        form.safe_updates = profile.safe_updates;
         // No `form.mode` here: the mode dropdown draws only on a fresh form and
         // `save_profile` has no mode to take, so copying it in was a write
         // nothing ever read. The titlebar picker is where an existing
@@ -388,6 +393,7 @@ impl ConnectionForm {
         let mut form = Self::new(Some(&config), window, cx);
         form.color = profile.color;
         form.mode = starting_mode(Some(profile.mode));
+        form.safe_updates = profile.safe_updates;
         form.name.update(cx, |input, cx| {
             input.set_value(name, window, cx);
         });

@@ -436,6 +436,29 @@ impl Workspace {
                     .into_any_element(),
             );
         }
+        // Unlike the mode, set new or edited: it only ever adds a question,
+        // so no live grid has anything to catch up on.
+        behaviour.push(
+            ui::option_row(
+                "Safe updates",
+                Some(
+                    "Ask before every statement that changes data or schema. A DROP, \
+                     TRUNCATE or DELETE without WHERE runs only after you type a \
+                     confirmation phrase."
+                        .into(),
+                ),
+                ui::switch("safe-updates", form.safe_updates, t).on_click(cx.listener(
+                    |workspace, _, _, cx| {
+                        if let Some(form) = &mut workspace.form {
+                            form.safe_updates = !form.safe_updates;
+                            cx.notify();
+                        }
+                    },
+                )),
+                t,
+            )
+            .into_any_element(),
+        );
         // The colour only ever labels a connection, so nothing here can make
         // the form invalid and nothing has to move focus.
         let swatches = std::iter::once(None)
@@ -950,11 +973,14 @@ impl Workspace {
         // Re-derived rather than trusted from when the prompt was raised: the
         // mode or the silenced list may have changed underneath it (the
         // upgrade arm changes the mode itself, mid-prompt).
-        let stop = sql::gate(&pending.verdict, profile.mode, &profile.confirmed)?;
+        let stop = profile.stop(&pending.verdict, pending.reviewed)?;
         let name = profile.name.clone();
         let current_mode = profile.mode.label();
         let sql = pending.resume.as_ref().map(|resume| resume.sql.clone());
         let dont_ask = pending.dont_ask;
+        let phrase = pending.phrase;
+        let phrase_input = profile.session.phrase_input.clone();
+        let typed = super::modes::phrase_matches(phrase_input.read(cx).value().as_ref(), phrase);
 
         let (title, message, confirm, tone) = match stop {
             Stop::Upgrade(needed) => (
@@ -991,6 +1017,25 @@ impl Workspace {
             Stop::Confirm(kind) => (
                 "Confirm",
                 format!("This is a {}. It cannot be undone.", kind.label()),
+                "Run".to_string(),
+                Tone::Danger,
+            ),
+            Stop::ConfirmWrite => (
+                "Confirm",
+                format!("Safe updates is on for {name}. This statement changes data or schema."),
+                "Run".to_string(),
+                Tone::Primary,
+            ),
+            Stop::TypePhrase(kind) => (
+                "Confirm",
+                match kind {
+                    Destructive::UnfilteredDelete => {
+                        "This DELETE has no WHERE clause, so it deletes every row in the \
+                         table. It cannot be undone."
+                            .to_string()
+                    }
+                    _ => format!("This is a {}. It cannot be undone.", kind.label()),
+                },
                 "Run".to_string(),
                 Tone::Danger,
             ),
@@ -1058,7 +1103,33 @@ impl Workspace {
                                         _ = tick.update(cx, |workspace, cx| {
                                             workspace.toggle_dont_ask(cx);
                                         });
-                                    }),
+                                    })
+                                    .into_any_element(),
+                            ),
+                            Stop::TypePhrase(_) => Some(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(layout::SPACE_XS))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_wrap()
+                                            .gap_x(px(layout::SPACE_XS))
+                                            .text_size(px(layout::chrome(layout::TEXT_SM)))
+                                            .text_color(t.text_muted)
+                                            .child(
+                                                div().child("Safe updates is on. To run it, type"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_color(t.text)
+                                                    .child(phrase),
+                                            ),
+                                    )
+                                    .child(Input::new(&phrase_input).w_full())
+                                    .into_any_element(),
                             ),
                             _ => None,
                         })
@@ -1091,6 +1162,7 @@ impl Workspace {
                                         Control::Standard,
                                         t,
                                     )
+                                    .disabled(matches!(stop, Stop::TypePhrase(_)) && !typed)
                                     .on_click(
                                         move |_, _, cx| {
                                             _ = approve.update(cx, |workspace, cx| {
