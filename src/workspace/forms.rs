@@ -939,83 +939,6 @@ impl Workspace {
         )
     }
 
-    /// What `cmd+w` asks before it takes a saved query with the tab.
-    pub(crate) fn render_close_confirmation(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let t = popup_theme(cx);
-        let name = self.profile()?.session.pending_close.clone()?;
-        let cancel_workspace = cx.entity().downgrade();
-        let delete_workspace = cancel_workspace.clone();
-        let deleted = name.clone();
-
-        Some(
-            div()
-                .absolute()
-                .inset_0()
-                .occlude()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    dialog(t)
-                        .child(section_label(t, "Close query"))
-                        .child(
-                            div()
-                                .text_size(px(layout::chrome(layout::TEXT_SM)))
-                                .text_color(t.text_muted)
-                                // The whole point of the dialog: a saved query
-                                // is listed while its file exists, so closing
-                                // its tab and deleting it are one act.
-                                .child(format!(
-                                    "{name} is a saved query. Closing its tab deletes it."
-                                )),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .justify_end()
-                                .gap(px(layout::SPACE_SM))
-                                .child(
-                                    button(
-                                        "cancel-close-tab",
-                                        "Cancel",
-                                        Tone::Quiet,
-                                        Control::Standard,
-                                        t,
-                                    )
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            _ = cancel_workspace.update(cx, |workspace, cx| {
-                                                workspace.cancel_close_tab(cx);
-                                            });
-                                        },
-                                    ),
-                                )
-                                .child(
-                                    button(
-                                        "confirm-close-tab",
-                                        "Delete",
-                                        Tone::Danger,
-                                        Control::Standard,
-                                        t,
-                                    )
-                                    .on_click(
-                                        move |_, window, cx| {
-                                            _ = delete_workspace.update(cx, |workspace, cx| {
-                                                workspace.delete_saved_query(
-                                                    deleted.clone(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        },
-                                    ),
-                                ),
-                        ),
-                )
-                .into_any_element(),
-        )
-    }
-
     /// The statement `execute_and_then` stopped, in one of three shapes
     /// derived from `sql::gate` -- never stored, so the shape shown and the
     /// verdict behind it cannot disagree about what they are asking (spec
@@ -1993,6 +1916,168 @@ impl Workspace {
                                 .appearance(false),
                         ),
                     ),
+            )
+            .child(div().flex_1().min_h_0().child(content))
+    }
+
+    /// The saved-query library, under the database's objects: one tree for
+    /// every connection, opened into whichever is in front.
+    pub(crate) fn render_library(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = *theme(cx);
+        let workspace = cx.entity().downgrade();
+        let menu_workspace = workspace.clone();
+        let open = self
+            .profile()
+            .and_then(|profile| profile.session.open_query())
+            .map(str::to_string);
+        let pending = self.pending_query_delete.clone();
+        let content = if self.library.is_empty() {
+            div()
+                .p(px(layout::SPACE_MD))
+                .text_size(px(layout::chrome(layout::TEXT_SM)))
+                .text_color(t.text_muted)
+                .child(
+                    "No saved queries yet. Save the query in front from its toolbar; \
+                     a name like reports/daily puts it in a folder.",
+                )
+                .into_any_element()
+        } else {
+            render_tree(&self.library_tree, move |index, entry, _, _, cx| {
+                let t = *theme(cx);
+                let query = crate::library::query_of(&entry.item().id).map(str::to_string);
+                let row_icon_path = match &query {
+                    Some(_) => icon::SAVED_QUERY,
+                    None if entry.is_expanded() => icon::CHEVRON_DOWN,
+                    None => icon::CHEVRON_RIGHT,
+                };
+                let in_front = query.is_some() && query == open;
+                let armed = query.is_some() && query == pending;
+                let group = format!("library-row-{index}");
+                let row = ListItem::new(index)
+                    .mx(px(layout::SPACE_XS))
+                    .rounded(px(layout::RADIUS_CONTROL))
+                    .text_size(px(layout::chrome(layout::TEXT_MD)))
+                    .text_color(t.text)
+                    .when(in_front, |row| row.bg(t.element_active))
+                    .when(query.is_none(), |row| row.font_weight(FontWeight::MEDIUM))
+                    .pl(px(
+                        layout::SPACE_SM + entry.depth() as f32 * layout::SPACE_MD
+                    ))
+                    .child(
+                        div()
+                            .id(("library-row", index))
+                            .group(group.clone())
+                            .flex()
+                            .items_center()
+                            .gap(px(layout::SPACE_SM))
+                            .min_w_0()
+                            .flex_1()
+                            .child(row_icon(t, row_icon_path))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .child(entry.item().label.clone()),
+                            )
+                            .children(query.clone().map(|name| {
+                                let delete_workspace = workspace.clone();
+                                // Revealed by its own row, so the column reads
+                                // as names rather than a run of delete buttons;
+                                // armed, it says the word and takes the danger
+                                // fill.
+                                div()
+                                    .flex_none()
+                                    .when(!armed, |delete| {
+                                        delete
+                                            .opacity(0.)
+                                            .group_hover(group.clone(), |style| style.opacity(1.))
+                                    })
+                                    .child(
+                                        icon_button(
+                                            ("delete-library-query", index),
+                                            icon::DELETE,
+                                            if armed { Tone::Danger } else { Tone::Quiet },
+                                            Control::Inline,
+                                            t,
+                                        )
+                                        .when(armed, |armed| {
+                                            armed.w_auto().px(px(layout::SPACE_XS)).child(
+                                                button_label(
+                                                    "Delete?",
+                                                    Tone::Danger,
+                                                    Control::Inline,
+                                                    t,
+                                                ),
+                                            )
+                                        })
+                                        .tooltip("Delete query")
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                // Or the row underneath opens the
+                                                // query in the same click.
+                                                cx.stop_propagation();
+                                                _ = delete_workspace.update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .arm_delete_saved_query(name.clone(), cx);
+                                                });
+                                            },
+                                        ),
+                                    )
+                            })),
+                    );
+                let Some(name) = query else {
+                    return row;
+                };
+                let workspace = workspace.clone();
+                row.on_click(move |_, window, cx| {
+                    _ = workspace.update(cx, |workspace, cx| {
+                        workspace.open_saved_query(name.clone(), window, cx);
+                    });
+                })
+            })
+            .context_menu(move |_, entry, menu, _, _| {
+                let Some(name) = crate::library::query_of(&entry.item().id) else {
+                    return menu;
+                };
+                let (open_name, delete_name) = (name.to_string(), name.to_string());
+                let open_workspace = menu_workspace.clone();
+                let delete_workspace = menu_workspace.clone();
+                menu.item(PopupMenuItem::new("Open").on_click(move |_, window, cx| {
+                    _ = open_workspace.update(cx, |workspace, cx| {
+                        workspace.open_saved_query(open_name.clone(), window, cx);
+                    });
+                }))
+                .separator()
+                // Arms the row's own delete rather than deleting: the menu is
+                // one click away from Open, and a deleted query does not come
+                // back.
+                .item(PopupMenuItem::new("Delete…").on_click(move |_, _, cx| {
+                    _ = delete_workspace.update(cx, |workspace, cx| {
+                        workspace.arm_delete_saved_query(delete_name.clone(), cx);
+                    });
+                }))
+            })
+            .into_any_element()
+        };
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .w_full()
+                    .h(px(layout::chrome(layout::TAB_HEIGHT)))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .px(px(layout::SPACE_MD))
+                    .border_b_1()
+                    .border_color(t.border)
+                    .child(section_label(t, "Queries")),
             )
             .child(div().flex_1().min_h_0().child(content))
     }

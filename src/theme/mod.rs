@@ -118,6 +118,8 @@ pub mod layout {
     pub const SIDEBAR_DEFAULT_WIDTH: f32 = 220.0;
     pub const SIDEBAR_MIN_WIDTH: f32 = 180.0;
     pub const SIDEBAR_MAX_WIDTH: f32 = 480.0;
+    /// The saved-query library under the database's objects, until dragged.
+    pub const LIBRARY_DEFAULT_HEIGHT: f32 = 220.0;
     pub const DIALOG_WIDTH: f32 = 420.0;
     /// A statement or an error shown on a modal, capped so a long one scrolls
     /// inside the card instead of pushing its buttons off the window.

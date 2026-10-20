@@ -32,6 +32,7 @@ mod workspace;
 
 mod icons;
 mod keybindings;
+mod library;
 mod theme;
 mod tls;
 mod ui;
@@ -52,7 +53,7 @@ use gpui_component::{
         InputModeKind, InputState, Position,
     },
     list::ListItem,
-    resizable::{ResizableState, h_resizable, resizable_panel},
+    resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
     tree::tree as render_tree,
 };
 
