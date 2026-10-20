@@ -312,7 +312,8 @@ Decided, and not to be re-litigated:
   whole value where Postgres `~` and MySQL's `REGEXP_LIKE` match anywhere.
   Explain is not offered: its plan is a fourth shape `explain.rs` does not read.
 - **`CHECK` constraints are absent** from the Structure tab on MySQL and SQLite.
-  SQLite keeps them only in the `CREATE TABLE` text; MySQL's
+  SQLite keeps them only in the `CREATE TABLE` text (the cell editor reads the
+  one shape it offers values from, above, and shows nothing back); MySQL's
   `information_schema.CHECK_CONSTRAINTS` only exists from 8.0.16.
 - **MySQL verifies certificates against `webpki-roots`**, not the platform
   trust store the Postgres path reads. It fails loudly, which `AGENTS.md` hard rule 7 permits.
@@ -516,14 +517,18 @@ Decided, and not to be re-litigated:
   palette (`workspace::files`) opens in a DuckDB profile held in memory, made
   if there is none, as a query tab whose `SELECT * FROM read_csv(…)` DBDelve
   wrote on screen and runs once the profile connects.
-- **Only Postgres offers an enum's labels while editing.** The describe that
-  finds a result's edit target already holds them (the driver reads `pg_enum`
-  to prepare the statement, and follows a domain to the enum under it), so
-  `EditTarget::choices` costs no round trip, and an open input on such a cell
-  carries a dropdown of them. Beside the input, not instead of it: a label can
-  still be typed, and a pick (`SetCellValue`) stages exactly what typing it
-  would, through the same gate. SQLite has no enum type, only a
-  `CHECK (… IN …)` DBDelve does not read; MySQL's `ENUM` is not wired up.
+- **A column held to a few values offers them while editing, on Postgres and
+  SQLite.** `EditTarget::choices` carries them, and an open input on such a
+  cell carries a dropdown of them. Beside the input, not instead of it: a
+  label can still be typed, and a pick (`SetCellValue`) stages exactly what
+  typing it would, through the same gate. On Postgres they are an enum's
+  labels, which the describe that finds the edit target already holds (the
+  driver reads `pg_enum` to prepare the statement, and follows a domain to the
+  enum under it), so they cost no round trip. SQLite has no enum type, so they
+  are a `CHECK (column IN ('a', 'b'))` read out of the table's `CREATE TABLE`
+  text with `sqlparser` (`sqlite::in_list_checks`), one query per editable
+  result: any other shape of check, and a column two of them narrow, offers
+  nothing. MySQL's `ENUM` is not wired up.
 - **Geometry is Postgres-only.** MySQL has a `GEOMETRY` type; rendering it is a
   separate decision nobody has asked for.
 - **MariaDB's `JSON` is a `longtext` with a `json_valid` check**, and is shown

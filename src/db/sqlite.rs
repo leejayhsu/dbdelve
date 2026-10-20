@@ -23,6 +23,9 @@ use std::time::{Duration, Instant};
 use rusqlite::fallible_iterator::FallibleIterator;
 use rusqlite::types::ValueRef;
 use rusqlite::{Batch, InterruptHandle, OpenFlags};
+use sqlparser::ast::{ColumnOption, Expr, Statement, TableConstraint, Value, ValueWithSpan};
+use sqlparser::dialect::SQLiteDialect;
+use sqlparser::parser::Parser;
 
 use super::{
     Catalog, Column, DbError, EditTarget, Engine, Fetch, ForeignKey, NamedDefinition, QueryResult,
@@ -348,7 +351,13 @@ impl Connection {
         // held on the connection is the upgrade path if the trip shows up in
         // query timings.
         let key = self.schema().primary_key(&schema, &table).ok()?;
-        resolve_edit_target(probed, &schema, &table, &key)
+        let mut target = resolve_edit_target(probed, &schema, &table, &key)?;
+        // Only an offer to the cell editor, so a table whose text will not
+        // read leaves its cells plain inputs and stays editable.
+        if let Ok(checks) = self.schema().in_list_checks(&schema, &table) {
+            target.choices = choices_by_column(&target.columns, &checks);
+        }
+        Some(target)
     }
 
     fn schema(&self) -> Schema<impl Fn(&str) -> Result<QueryResult, DbError> + '_> {
@@ -538,6 +547,25 @@ impl<F: Fn(&str) -> Result<QueryResult, DbError>> Schema<F> {
         structure.constraints = self.constraints(schema, relation)?;
         structure.foreign_keys = self.foreign_keys(schema, relation)?;
         Ok(structure)
+    }
+
+    /// The values a `CHECK` holds each column to, read out of the table's
+    /// `CREATE TABLE` text, which is the only place SQLite keeps one.
+    fn in_list_checks(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<(String, Vec<String>)>, DbError> {
+        let listed = (self.run)(&format!(
+            "SELECT sql FROM {}.sqlite_master
+             WHERE type = 'table' AND name = {} COLLATE NOCASE",
+            self.engine.quote_identifier(schema),
+            self.engine.quote_literal(table),
+        ))?;
+        Ok(column_of(&listed, "sql")?
+            .first()
+            .map(|create| in_list_checks(create))
+            .unwrap_or_default())
     }
 
     /// The relation's own `CREATE` first, then its indexes and triggers in
@@ -857,6 +885,99 @@ fn resolve_edit_target(
         keys,
         choices: Vec::new(),
     })
+}
+
+/// Each column a `CHECK (column IN ('a', 'b'))` holds to a list of literals,
+/// on the column or on the table, with that list in the order written.
+///
+/// Parsed rather than matched, and any other shape offers nothing: a `NOT IN`,
+/// an `OR`, a subquery, a double-quoted name SQLite would read as a string.
+/// So does a column two such checks narrow, since neither list alone is what
+/// it admits.
+fn in_list_checks(create_table: &str) -> Vec<(String, Vec<String>)> {
+    let Ok(statements) = Parser::parse_sql(&SQLiteDialect {}, create_table) else {
+        return Vec::new();
+    };
+    let [Statement::CreateTable(table)] = statements.as_slice() else {
+        return Vec::new();
+    };
+    let on_columns = table
+        .columns
+        .iter()
+        .flat_map(|column| &column.options)
+        .filter_map(|option| match &option.option {
+            ColumnOption::Check(check) => Some(&check.expr),
+            _ => None,
+        });
+    let on_table = table
+        .constraints
+        .iter()
+        .filter_map(|constraint| match constraint {
+            TableConstraint::Check(check) => Some(&check.expr),
+            _ => None,
+        });
+
+    let mut found: Vec<(String, Vec<String>)> = Vec::new();
+    let mut twice: Vec<String> = Vec::new();
+    for (column, labels) in on_columns.chain(on_table).filter_map(|expr| in_list(expr)) {
+        match found
+            .iter()
+            .any(|(seen, _)| seen.eq_ignore_ascii_case(&column))
+        {
+            true => twice.push(column),
+            false => found.push((column, labels)),
+        }
+    }
+    found.retain(|(column, _)| !twice.iter().any(|name| name.eq_ignore_ascii_case(column)));
+    found
+}
+
+fn in_list(expr: &Expr) -> Option<(String, Vec<String>)> {
+    match expr {
+        Expr::Nested(inner) => in_list(inner),
+        Expr::InList {
+            expr,
+            list,
+            negated: false,
+        } => {
+            let Expr::Identifier(column) = expr.as_ref() else {
+                return None;
+            };
+            let labels = list
+                .iter()
+                .map(|item| match item {
+                    Expr::Value(ValueWithSpan {
+                        value: Value::SingleQuotedString(label) | Value::Number(label, _),
+                        ..
+                    }) => Some(label.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some((column.value.clone(), labels))
+        }
+        _ => None,
+    }
+}
+
+/// The checks laid against the edit target's columns, positionally. SQLite
+/// names a column without regard to case, so the match does too.
+fn choices_by_column(
+    columns: &[Option<String>],
+    checks: &[(String, Vec<String>)],
+) -> Vec<Vec<String>> {
+    columns
+        .iter()
+        .map(|name| {
+            name.as_ref()
+                .and_then(|name| {
+                    checks
+                        .iter()
+                        .find(|(column, _)| column.eq_ignore_ascii_case(name))
+                })
+                .map(|(_, labels)| labels.clone())
+                .unwrap_or_default()
+        })
+        .collect()
 }
 
 /// One `sqlite_master` scan per schema, aliased to the column names
@@ -1552,6 +1673,58 @@ CREATE TRIGGER accounts_touch AFTER INSERT ON Accounts BEGIN SELECT 1; END;"
             vec![Some("name".to_string()), Some("id".to_string())]
         );
         assert_eq!(edit.keys, vec![1]);
+    }
+
+    #[test]
+    fn a_check_holding_a_column_to_a_list_offers_that_list_to_the_editor() {
+        let result = memory(
+            "CREATE TABLE invoices (
+                 id INTEGER PRIMARY KEY,
+                 status TEXT NOT NULL CHECK (status IN ('draft', 'sent', 'paid')),
+                 note TEXT
+             )",
+        )
+        .query("SELECT id, STATUS, note FROM invoices", Fetch::default())
+        .expect("query should succeed");
+        let edit = result.edit.expect("invoices has a primary key");
+
+        assert_eq!(
+            edit.choices,
+            vec![
+                Vec::<String>::new(),
+                vec!["draft".to_string(), "sent".to_string(), "paid".to_string()],
+                Vec::new(),
+            ]
+        );
+    }
+
+    #[test]
+    fn only_a_plain_list_of_literals_is_read_as_what_a_column_admits() {
+        let checks = in_list_checks(
+            "CREATE TABLE t (
+                 id INTEGER PRIMARY KEY,
+                 a CHECK ((a IN ('x', 'y'))),
+                 b TEXT CHECK (b NOT IN ('x')),
+                 c TEXT CHECK (c IN ('x') OR c IS NULL),
+                 d TEXT CHECK (d IN (\"x\", \"y\")),
+                 e TEXT CHECK (e IN ('x', 'y')),
+                 f INTEGER,
+                 CONSTRAINT f_level CHECK (f IN (1, 2, 3)),
+                 CHECK (e IN ('y'))
+             )",
+        );
+
+        assert_eq!(
+            checks,
+            vec![
+                ("a".to_string(), vec!["x".to_string(), "y".to_string()]),
+                (
+                    "f".to_string(),
+                    vec!["1".to_string(), "2".to_string(), "3".to_string()]
+                ),
+            ]
+        );
+        assert!(in_list_checks("not a table at all").is_empty());
     }
 
     #[test]

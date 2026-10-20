@@ -290,6 +290,10 @@ encoding_rs = "=0.8.35"
 # still finds statement boundaries in a half-typed buffer -- a strict parser
 # returns `Err` and nothing else.
 #
+# Also reads a SQLite table's `CREATE TABLE` text for the `CHECK (column IN
+# (...))` lists the cell editor offers, where a strict parse is again the
+# point: a check of any other shape offers nothing rather than a guess.
+#
 # Default features off: they pull `psm`, which builds assembly through `cc`, to
 # guard against pathological nesting we do not accept from a local buffer. Off,
 # it is two pure-Rust crates and an 8.5s build instead of 28.6s.
