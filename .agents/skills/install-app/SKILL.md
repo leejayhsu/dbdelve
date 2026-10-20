@@ -13,7 +13,7 @@ removed.
 ## Run it
 
 ```bash
-.claude/skills/install-app/scripts/install.sh
+.agents/skills/install-app/scripts/install.sh
 ```
 
 The release build compiles with thin LTO and one codegen unit, so even an
