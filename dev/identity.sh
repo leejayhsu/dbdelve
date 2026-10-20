@@ -40,11 +40,15 @@ CONF
 
 openssl req -x509 -newkey rsa:2048 -sha256 -days 7300 -nodes \
   -config "$WORK/openssl.cnf" -keyout "$WORK/key.pem" -out "$WORK/cert.pem"
+# `security import` reads only SHA-1 and 3DES in a PKCS#12, which a Homebrew
+# OpenSSL 3 does not write unless told, and refuses an empty password, both as
+# "MAC verification failed". The password guards a file deleted on exit.
 openssl pkcs12 -export -out "$WORK/identity.p12" \
-  -inkey "$WORK/key.pem" -in "$WORK/cert.pem" -name "$NAME" -passout pass:
+  -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
+  -inkey "$WORK/key.pem" -in "$WORK/cert.pem" -name "$NAME" -passout pass:dbdelve
 
 # -T codesign, so signing a rebuild does not ask for the private key each time.
-security import "$WORK/identity.p12" -k "$KEYCHAIN" -P "" -T /usr/bin/codesign
+security import "$WORK/identity.p12" -k "$KEYCHAIN" -P dbdelve -T /usr/bin/codesign
 # Untrusted, the certificate is not an identity codesign will sign with. The
 # user domain rather than -d, so this asks for the login password, not admin.
 security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$WORK/cert.pem"
