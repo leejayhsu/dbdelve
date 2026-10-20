@@ -25,9 +25,15 @@ the above.
 Failing Homebrew, take the `.dmg` from [the latest release][releases] and drag
 DBDelve to Applications. Same quarantine step and you have to update manually.
 
-To build it yourself instead, `DBDELVE_CHANNEL=release dev/bundle.sh` produces
-`target/DBDelve.app` with the release build, icon and signature. Drag that to
-Applications; the quarantine step doesn't apply here.
+To build it yourself instead, run this from a clone of the repository:
+
+```sh
+.agents/skills/install-app/scripts/install.sh
+```
+
+It checks Xcode is set up, builds the release app and replaces
+`/Applications/DBDelve.app` with it. Quit DBDelve first. The quarantine step
+doesn't apply to an app you built.
 
 ## Linux
 
