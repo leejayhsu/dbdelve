@@ -256,7 +256,11 @@ The shape a change to the main pane has to fit (`session.rs`, with the
   only while it holds a query, so a delete takes empty ones with it. The
   sidebar shows the library as a tree under the database's objects
   (`render_library`, `library.rs`), and that tree is where a query is opened
-  and deleted. The tab strip holds a saved query only while its buffer is
+  and deleted. Which of its folders are closed is the workspace's
+  (`closed_folders`), saved with the settings as each one opens or closes and
+  read back at launch, so the tree comes back as it was left; Collapse All
+  closes every folder there is. A closed folder no longer in the library is
+  forgotten on the next read of it. The tab strip holds a saved query only while its buffer is
   open: closing the tab writes it back and leaves the query in the library;
   deleting it turns any buffer holding it, in any connection, into an unsaved
   one rather than taking the text away. A rename follows every connection's

@@ -404,6 +404,11 @@ pub struct StoredSettings {
     /// before there was one.
     #[serde(default)]
     pub welcomed: Option<bool>,
+    /// The saved-query library's folders that were closed, by path. An array
+    /// of strings is a value rather than a table, so it may sit among the
+    /// scalars.
+    #[serde(default)]
+    pub closed_query_folders: Option<Vec<String>>,
     /// Keybinding overrides, keyed by the action id in
     /// `keybindings::REGISTRY`. Only the ones a user actually changed --
     /// everything else stays on whatever the running build defaults to.
@@ -3035,6 +3040,7 @@ open_objects = []
                 color_titlebar: Some(false),
                 client_sort: Some(true),
                 welcomed: Some(true),
+                closed_query_folders: Some(vec!["reports".into(), "reports/q1".into()]),
                 custom_keybindings: Some(HashMap::from([(
                     "apply_edits".to_string(),
                     "cmd-shift-s".to_string(),

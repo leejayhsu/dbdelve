@@ -1600,14 +1600,26 @@ impl Workspace {
     }
 
     /// Read the library off disk again and redraw the sidebar's tree over it.
+    ///
+    /// A closed folder that is no longer in the library is forgotten, or the
+    /// list would keep every folder ever deleted, and a new folder by the
+    /// same name would start out closed for no reason anyone could see.
     pub(crate) fn refresh_library(&mut self, cx: &mut Context<Self>) {
-        let collapsed = crate::library::collapsed(&self.library_items);
         self.library = store::saved_queries();
-        self.library_items = crate::library::tree(&self.library, &collapsed);
-        let items = self.library_items.clone();
+        let folders = crate::library::folders(&self.library);
+        self.closed_folders
+            .retain(|folder| folders.contains(folder));
+        let items = crate::library::tree(&self.library, &self.closed_folders);
         self.library_tree
             .update(cx, |tree, cx| tree.set_items(items, cx));
         cx.notify();
+    }
+
+    /// Close every folder in the library, so only its top level shows.
+    pub(crate) fn collapse_library(&mut self, cx: &mut Context<Self>) {
+        self.closed_folders = crate::library::folders(&self.library);
+        self.refresh_library(cx);
+        self.remember_profiles(cx);
     }
 
     /// Write a saved query's buffer back to its file and close its tab. The

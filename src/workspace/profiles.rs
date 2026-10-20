@@ -53,6 +53,13 @@ impl Workspace {
             color_titlebar: Some(self.settings.color_titlebar),
             client_sort: Some(self.settings.client_sort),
             welcomed: Some(self.settings.welcomed),
+            // Sorted, so a file that changed only in which order a set gave
+            // these back does not read as changed.
+            closed_query_folders: Some({
+                let mut closed = self.closed_folders.iter().cloned().collect::<Vec<_>>();
+                closed.sort();
+                closed
+            }),
             custom_keybindings: Some(self.settings.custom_keybindings.clone()),
             theme_opacity: Some(self.settings.theme_opacity.clone()),
         };

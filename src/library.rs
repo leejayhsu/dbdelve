@@ -13,6 +13,25 @@ pub fn query_of(id: &str) -> Option<&str> {
     id.strip_prefix(QUERY)
 }
 
+/// The folder a row stands for, or `None` for a query.
+pub fn folder_of(id: &str) -> Option<&str> {
+    id.strip_prefix(FOLDER)
+}
+
+/// Every folder the library's queries sit in, nested ones included: what
+/// Collapse All closes, and what a remembered closed folder must still be
+/// among to be worth remembering.
+pub fn folders(names: &[String]) -> HashSet<String> {
+    names
+        .iter()
+        .flat_map(|name| {
+            name.match_indices('/')
+                .map(|(at, _)| name[..at].to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// The library as tree rows: folders ahead of queries at every level, each in
 /// name order. Every folder is open unless `collapsed` names it, so a rebuild
 /// after a save keeps closed what was closed and shows a new folder open.
@@ -29,22 +48,6 @@ pub fn tree(names: &[String], collapsed: &HashSet<String>) -> Vec<TreeItem> {
         }
     }
     root.items("", collapsed)
-}
-
-/// The folders `tree` drew closed, read back off the rows it drew, so the next
-/// rebuild can keep them that way.
-pub fn collapsed(items: &[TreeItem]) -> HashSet<String> {
-    let mut closed = HashSet::new();
-    let mut stack: Vec<&TreeItem> = items.iter().collect();
-    while let Some(item) = stack.pop() {
-        if let Some(path) = item.id.strip_prefix(FOLDER) {
-            if !item.is_expanded() {
-                closed.insert(path.to_string());
-            }
-            stack.extend(item.children.iter());
-        }
-    }
-    closed
 }
 
 #[derive(Default)]
@@ -111,6 +114,19 @@ mod tests {
         assert_eq!(items[0].children[1].label.as_ref(), "weekly");
         assert_eq!(query_of("query:reports/weekly"), Some("reports/weekly"));
         assert_eq!(query_of("folder:reports"), None);
+        assert_eq!(folder_of("folder:reports/q1"), Some("reports/q1"));
+        assert_eq!(folder_of("query:reports/weekly"), None);
+    }
+
+    #[test]
+    fn every_folder_is_listed_once_nested_ones_included() {
+        let names = ["zeta", "reports/weekly", "reports/q1/sales"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            folders(&names),
+            HashSet::from(["reports".to_string(), "reports/q1".to_string()])
+        );
     }
 
     #[test]
@@ -122,6 +138,5 @@ mod tests {
         let items = tree(&names, &closed);
         assert!(items[0].is_expanded());
         assert!(!items[0].children[0].is_expanded());
-        assert_eq!(collapsed(&items), closed);
     }
 }
