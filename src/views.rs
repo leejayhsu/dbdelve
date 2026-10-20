@@ -194,7 +194,7 @@ fn render_editor_surface(
     font_size: f32,
     query: &QueryState,
     toolbar: AnyElement,
-    bottom: AnyElement,
+    bottom: Option<AnyElement>,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let t = *theme(cx);
@@ -242,6 +242,13 @@ fn render_editor_surface(
         .flex_col()
         .child(buffer)
         .child(toolbar);
+    // ponytail: the split is not mounted while folded, so a height dragged to
+    // before folding comes back as the default. Keeping it means holding the
+    // split's state on the tab, as `row_panel_split` is, and that state is
+    // keyed by `expanded` below for a reason of its own.
+    let Some(bottom) = bottom else {
+        return top.into_any_element();
+    };
 
     let expanded = result_pane_is_expanded(query);
     let (editor_height, results_height) = if expanded {
@@ -302,27 +309,31 @@ fn render_query_surface(
     // answer about the buffer above it, and two scrolling regions in a split
     // that is already a split leaves neither enough room to read.
     let (shown_state, shown_grid) = tab.shown();
-    let bottom = match tab.showing_plan.then_some(tab.plan.as_ref()).flatten() {
-        Some(explained) => render_plan(explained, plan_copied, &scope, cx),
-        None => render_results(
-            profile.config.engine(),
-            matches!(profile.state, ProfileState::Failed(_)),
-            shown_state,
-            shown_grid,
-            Some(tab),
-            tab.row_panel_folded,
-            tab.row_panel_editing,
-            &tab.row_panel_split,
-            row_panel,
-            profile
-                .session
-                .insert_form
-                .as_ref()
-                .filter(|form| form.tab == Tab::Query(tab.id)),
-            &scope,
-            cx,
-        ),
-    };
+    // Not built at all while folded: drawing the results is what tells the
+    // row panel it is on screen.
+    let bottom = (!tab.results_hidden).then(|| {
+        match tab.showing_plan.then_some(tab.plan.as_ref()).flatten() {
+            Some(explained) => render_plan(explained, plan_copied, &scope, cx),
+            None => render_results(
+                profile.config.engine(),
+                matches!(profile.state, ProfileState::Failed(_)),
+                shown_state,
+                shown_grid,
+                Some(tab),
+                tab.row_panel_folded,
+                tab.row_panel_editing,
+                &tab.row_panel_split,
+                row_panel,
+                profile
+                    .session
+                    .insert_form
+                    .as_ref()
+                    .filter(|form| form.tab == Tab::Query(tab.id)),
+                &scope,
+                cx,
+            ),
+        }
+    });
     render_editor_surface(
         // Keyed by the buffer rather than the profile: two query tabs are two
         // splits, and sharing one id would carry the first one's drag position

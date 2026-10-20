@@ -303,6 +303,18 @@ impl Workspace {
         }
     }
 
+    /// Unfold a query tab's results, so a run asked for from the keyboard is
+    /// never one whose answer has nowhere on screen to land.
+    fn reveal_results(&mut self, tab: Tab) {
+        if let Tab::Query(id) = tab
+            && let Some(query) = self
+                .profile_mut()
+                .and_then(|profile| profile.session.query_tab_mut(id))
+        {
+            query.results_hidden = false;
+        }
+    }
+
     pub(crate) fn run_query(&mut self, _: &RunQuery, window: &mut Window, cx: &mut Context<Self>) {
         if self.import_covers() {
             return;
@@ -327,6 +339,7 @@ impl Workspace {
         let Some(editor) = profile.session.editor(tab) else {
             return;
         };
+        self.reveal_results(tab);
 
         // A selection holding more than one statement runs each of them in
         // turn, keeping every result. Anything else -- one selected statement,
@@ -1059,6 +1072,7 @@ impl Workspace {
             return;
         };
         let engine = profile.config.engine();
+        self.reveal_results(tab);
 
         let failure = |workspace: &mut Self, message: &str, cx: &mut Context<Self>| {
             workspace.refuse_run(tab, message.into(), cx);

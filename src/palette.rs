@@ -377,6 +377,7 @@ pub enum Command {
     ToggleSidebar,
     ToggleRowPanel,
     ToggleRowEdit,
+    ToggleResults,
     ResetEditorZoom,
     OpenSettings,
     /// Pick data files to open in DuckDB.
@@ -3162,6 +3163,15 @@ fn command_items(workspace: &Workspace, profile: &Profile, cx: &App) -> Vec<Item
         "toggle_row_edit",
     ));
     if matches!(session.active, Tab::Query(_)) {
+        items.push(bound(
+            command(
+                "Toggle results pane",
+                icon::RESULTS_PANE,
+                Command::ToggleResults,
+                WINDOW,
+            ),
+            "toggle_results",
+        ));
         items.push(bound(
             command(
                 "Reset editor zoom",
