@@ -1825,7 +1825,7 @@ fn footer_hint(chords: &[Option<&str>], label: &'static str, t: Theme) -> impl I
 /// with nothing typed: what somebody wrote first, then the database's own
 /// objects, then the verbs, the other connections and the history.
 fn search_items(workspace: &Workspace, profile: &Profile, cx: &App) -> Vec<Item> {
-    let mut items = query_items(profile);
+    let mut items = query_items(&workspace.library);
     items.extend(object_items(profile));
     items.extend(command_items(workspace, profile, cx));
     items.extend(connection_items(workspace));
@@ -1837,13 +1837,13 @@ fn search_items(workspace: &Workspace, profile: &Profile, cx: &App) -> Vec<Item>
     items
 }
 
-/// The scratch buffer and every saved query.
-fn query_items(profile: &Profile) -> Vec<Item> {
+/// The scratch buffer and every saved query in the library.
+fn query_items(library: &[String]) -> Vec<Item> {
     let scratch = Item::new("Scratch query", icon::SCRATCH_QUERY, Command::OpenScratch)
         .hint("scratch")
         .scope(Scope::Queries);
     std::iter::once(scratch)
-        .chain(profile.session.saved_queries.iter().map(|name| {
+        .chain(library.iter().map(|name| {
             Item::new(
                 name.clone(),
                 icon::SAVED_QUERY,

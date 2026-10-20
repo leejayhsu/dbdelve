@@ -595,7 +595,7 @@ impl Workspace {
         if self.cancel_discard_close(cx) {
             return;
         }
-        if self.cancel_close_tab(cx) {
+        if self.disarm_query_delete(cx) {
             return;
         }
         if self.close_import(cx) {
@@ -679,10 +679,9 @@ impl Workspace {
     /// `cmd+w` on whatever surface is in front.
     ///
     /// An object tab closes: it is a view onto something the database still
-    /// holds, and reopening it costs a click. A saved query is a file, and
-    /// closing its tab is deleting that file — the strip has no room for a
-    /// query that exists but is not listed — so that one asks first. The
-    /// scratch buffer has no closed state at all and is left alone.
+    /// holds, and reopening it costs a click. A saved query's tab is written
+    /// back to its file and closes; the query stays in the sidebar's library.
+    /// An unsaved buffer closes with its text.
     pub(crate) fn close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
         // The palette is over the tab and holds the keyboard: a stroke that
         // reached here through it would close a tab nobody was looking at.
@@ -728,11 +727,10 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Carry out a close that has been decided on. A saved query asks its own
-    /// question from here: closing its tab deletes its file.
+    /// Carry out a close that has been decided on.
     ///
     /// Nothing is stopped here: each close stops its tab's statement as the
-    /// tab goes, and a saved query's goes only once its delete is confirmed.
+    /// tab goes.
     pub(crate) fn close_now(
         &mut self,
         target: CloseTarget,
@@ -742,12 +740,7 @@ impl Workspace {
         match target {
             CloseTarget::Object(id) => self.close_object(id, window, cx),
             CloseTarget::Buffer(id) => self.close_buffer(id, window, cx),
-            CloseTarget::SavedQuery(name) => {
-                if let Some(profile) = self.profile_mut() {
-                    profile.session.pending_close = Some(name);
-                }
-                cx.notify();
-            }
+            CloseTarget::SavedQuery(name) => self.close_saved_query(&name, window, cx),
         }
     }
 
@@ -814,17 +807,6 @@ impl Workspace {
         let cancelled = self
             .profile_mut()
             .and_then(|profile| profile.session.pending_discard.take())
-            .is_some();
-        if cancelled {
-            cx.notify();
-        }
-        cancelled
-    }
-
-    pub(crate) fn cancel_close_tab(&mut self, cx: &mut Context<Self>) -> bool {
-        let cancelled = self
-            .profile_mut()
-            .and_then(|profile| profile.session.pending_close.take())
             .is_some();
         if cancelled {
             cx.notify();

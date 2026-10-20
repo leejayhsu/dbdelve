@@ -1251,8 +1251,9 @@ The shape a change to the main pane has to fit (`session.rs`, with the
   it that way). Which project you are in is derived from the connection in
   front (`Workspace::current_group`), never stored: it is what the titlebar
   names and what All in the palette and next/previous connection keep to.
-  Tabs, saved queries and history stay per profile, which is what keeps
-  projects from mixing state. A project may hold no connections. The connection form's Project control
+  Tabs and history stay per profile, which is what keeps projects from mixing
+  state; saved queries are the one library every connection shares (see
+  below). A project may hold no connections. The connection form's Project control
   (`Workspace::project_dropdown`) picks the project, new and edit alike: a new
   connection starts in the project its form was opened for
   (`ConnectionForm::project`), an edited one in its own, and "New project…"
@@ -1460,12 +1461,40 @@ The shape a change to the main pane has to fit (`session.rs`, with the
   on one empty buffer instead. `active` may
   then name a tab that is gone, which every lookup by id already answers with
   `None`, and focus falls back to the window so the bindings that open a tab
-  still work. Deleting the saved query in a tab closes that tab.
-- **A named buffer persists to its query file, an unnamed one to its own
-  `.scratch-{id}.sql`.** Every buffer is written on quit, not just the visible
-  one. `store::read_scratch(id, 0)` migrates the single `.scratch.sql` an older
-  build left behind, and `StoredProfile::open_query` is still read for the same
-  reason and never written.
+  still work.
+- **Saved queries are one library for every connection**, the `library`
+  directory beside `profiles.toml`, and opening one puts it in a tab of
+  whichever connection is in front. A name may hold folders (`reports/daily`
+  is `library/reports/daily.sql`), always spelled with `/`; a folder exists
+  only while it holds a query, so a delete takes empty ones with it. The
+  sidebar shows the library as a tree under the database's objects
+  (`render_library`, `library.rs`), and that tree is where a query is opened
+  and deleted. The tab strip holds a saved query only while its buffer is
+  open: closing the tab writes it back and leaves the query in the library;
+  deleting it turns any buffer holding it, in any connection, into an unsaved
+  one rather than taking the text away. A rename follows every connection's
+  open buffer (`rename_open_query`), or the next write would put the old name
+  back.
+- **The library is shared, so only the profile in front writes a saved
+  query.** Leaving the front writes every buffer of the profile leaving, so
+  the file is never older than a profile's copy; coming to the front rereads
+  each saved query open there (`reread_saved_queries`), since another
+  connection may have changed it meanwhile; and quitting writes saved queries
+  from the profile in front alone (`write_buffer`'s `saved`), so a stale copy
+  behind it cannot overwrite a newer file.
+- **Saved queries from before the library are adopted, once.**
+  `store::adopt_saved_queries` copies each profile's old
+  `queries/<profile>/<name>.sql` into the library on its first launch since,
+  under the same name, or `<name> (<profile id>)` when the library holds other
+  text under it, and renames the profile's open buffers to match. Copied, not
+  moved, so an older build still finds them; the `.adopted` marker it leaves is
+  what keeps a query deleted from the library from coming back.
+- **A named buffer persists to its file in the library, an unnamed one to its
+  profile's own `.scratch-{id}.sql`.** Every buffer is written on quit, not
+  just the visible one, saved queries aside (above). `store::read_scratch(id,
+  0)` migrates the single `.scratch.sql` an older build left behind, and
+  `StoredProfile::open_query` is still read for the same reason and never
+  written.
 - **Grids are snapshotted to disk and restored on relaunch.** The first edit on
   a restored grid asks first, because its rows may be stale. A queue's results
   are snapshotted too, one key each (`store::queued_grid_key`), each carrying

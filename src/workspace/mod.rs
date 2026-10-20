@@ -184,6 +184,19 @@ pub(crate) struct Workspace {
     pub(crate) editor_zoom: u32,
     pub(crate) grid_zoom: u32,
     pub(crate) shell_split: Entity<ResizableState>,
+    /// The sidebar's split between the database's objects and the library.
+    pub(crate) sidebar_split: Entity<ResizableState>,
+    /// Every saved query, by name. On the workspace rather than a session:
+    /// the library is one directory, whichever connection is in front.
+    pub(crate) library: Vec<String>,
+    /// The rows `library_tree` was last given. Kept because a row's open or
+    /// closed state is shared with the tree's copy, and the tree has no way
+    /// to hand its rows back -- see `refresh_library`.
+    pub(crate) library_items: Vec<gpui_component::tree::TreeItem>,
+    pub(crate) library_tree: Entity<gpui_component::tree::TreeState>,
+    /// The saved query whose delete has been clicked once and is waiting for
+    /// the second.
+    pub(crate) pending_query_delete: Option<String>,
     pub(crate) tab_strip: crate::tab_drag::TabStrip,
     /// Where the sidebar's edge is unless a drag has moved it. The library
     /// rescales every panel by its share when the window changes size, so this
@@ -346,6 +359,11 @@ impl Workspace {
             editor_zoom: 100,
             grid_zoom: 100,
             shell_split: cx.new(|_| ResizableState::default()),
+            sidebar_split: cx.new(|_| ResizableState::default()),
+            library: Vec::new(),
+            library_items: Vec::new(),
+            library_tree: cx.new(|cx| gpui_component::tree::TreeState::new(cx)),
+            pending_query_delete: None,
             tab_strip: crate::tab_drag::TabStrip::default(),
             sidebar_width: std::cell::Cell::new(px(layout::SIDEBAR_DEFAULT_WIDTH)),
             sidebar_container: std::cell::Cell::new(px(0.)),
@@ -506,6 +524,10 @@ impl Workspace {
                 workspace.form = Some(form);
             }
         }
+
+        // After every profile is restored, since restoring one is what copies
+        // the queries it saved before there was one library into it.
+        workspace.refresh_library(cx);
 
         // After the environment's form, which takes the notice over the
         // welcome surface when there is one.
@@ -1013,6 +1035,7 @@ impl Render for Workspace {
         // have: the catalog that names these tabs resolves off-thread, and a
         // grid cannot be built without a window.
         self.restore_objects(window, cx);
+        self.reread_saved_queries(window, cx);
         self.sync_page_input(window, cx);
         self.sync_row_panel_filter(window, cx);
         self.sync_row_panel_inputs(window, cx);
@@ -1800,10 +1823,19 @@ impl Render for Workspace {
                                 .flex()
                                 .flex_col()
                                 .child(
-                                    div()
-                                        .flex_1()
-                                        .min_h_0()
-                                        .child(self.render_explorer(profile, cx)),
+                                    div().flex_1().min_h_0().child(
+                                        v_resizable("sidebar-split")
+                                            .with_state(&self.sidebar_split)
+                                            .child(
+                                                resizable_panel()
+                                                    .child(self.render_explorer(profile, cx)),
+                                            )
+                                            .child(
+                                                resizable_panel()
+                                                    .size(px(layout::LIBRARY_DEFAULT_HEIGHT))
+                                                    .child(self.render_library(cx)),
+                                            ),
+                                    ),
                                 )
                                 .child(
                                     div()
@@ -1997,7 +2029,6 @@ impl Render for Workspace {
             .child(self.beside_settings(main_pane, cx))
             .children(self.render_apply_review(cx))
             .children(self.render_import_rows(window, cx))
-            .children(self.render_close_confirmation(cx))
             .children(self.render_discard_confirmation(cx))
             .children(self.render_pending_run(cx))
             .children(self.render_queue_failure(cx))

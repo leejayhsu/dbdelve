@@ -148,11 +148,23 @@ impl Workspace {
                 schema: stored.schema,
             }),
         };
-        let stored_queries = stored_buffers(
+        // Before the buffers are built, since a buffer holding a query this
+        // profile saved before the library was shared may hold it under a new
+        // name there now.
+        let (adopted, adopt_failure) = match store::adopt_saved_queries(&stored.id) {
+            Ok(adopted) => (adopted, None),
+            Err(message) => (HashMap::new(), Some(message)),
+        };
+        let mut stored_queries = stored_buffers(
             stored.open_queries,
             stored.next_query_id,
             stored.open_query.clone(),
         );
+        for tab in &mut stored_queries {
+            if let Some(name) = tab.name.as_ref().and_then(|name| adopted.get(name)) {
+                tab.name = Some(name.clone());
+            }
+        }
         // Snapshots whose tab is gone -- a renamed table strands its file
         // under the old name, and nothing else will ever remove it.
         // A buffer's queued results are live too, and the count is what says
@@ -185,6 +197,7 @@ impl Workspace {
         // An unreadable sslmode only means anything to an engine that has one.
         let notice = unreadable_engine
             .map(|message| format!("{message} Reading it as Postgres."))
+            .or(adopt_failure)
             .or_else(|| {
                 unreadable_mode
                     .filter(|_| config.server().is_some())
@@ -1728,6 +1741,7 @@ impl Workspace {
         self.remember_profiles(cx);
         if let Some(profile) = self.profile_mut() {
             profile.session.editor_needs_focus = true;
+            profile.session.reread_saved = true;
             profile.session.clear_prompts();
         }
         self.connect_active(cx);
@@ -1780,10 +1794,6 @@ impl Workspace {
             return;
         }
 
-        // Counted before the directory goes, because afterwards there is
-        // nothing left to count and the number is what the note reports.
-        let queries = store::saved_queries(&id).len();
-
         let stopped = self.abandon_import(&id, cx);
 
         let removed = self.profiles.remove(index);
@@ -1811,7 +1821,7 @@ impl Workspace {
             self.refocus_front();
         }
         self.connect_active(cx);
-        let note = removal_note(&name, queries, removed_queries.err());
+        let note = removal_note(&name, removed_queries.err());
         self.note(
             match stopped {
                 Some(stopped) => format!("{note} {stopped}"),
@@ -1870,20 +1880,17 @@ pub(crate) fn is_unshared_imported_key<'a>(
         && !others.into_iter().any(|other| other == key)
 }
 
-/// What a removal took with it. The count is named because saved queries are
-/// the one thing a person could still want back, and a directory that outlived
-/// its profile is reported rather than passed over -- the id is derived from the
-/// name, so whatever is left there attaches itself to the next profile called
-/// the same thing.
-pub(crate) fn removal_note(name: &str, queries: usize, problem: Option<String>) -> String {
-    if let Some(problem) = problem {
-        return format!("Removed {name}, but its saved queries are still on disk: {problem}");
-    }
-
-    match queries {
-        0 => format!("Removed {name}."),
-        1 => format!("Removed {name} and its saved query."),
-        _ => format!("Removed {name} and its {queries} saved queries."),
+/// What a removal took with it. A directory that outlived its profile is
+/// reported rather than passed over -- the id is derived from the name, so
+/// whatever is left there attaches itself to the next profile called the same
+/// thing. Saved queries are not among it: they are the library's, not the
+/// profile's.
+pub(crate) fn removal_note(name: &str, problem: Option<String>) -> String {
+    match problem {
+        Some(problem) => {
+            format!("Removed {name}, but its unsaved buffers are still on disk: {problem}")
+        }
+        None => format!("Removed {name}."),
     }
 }
 
@@ -2043,19 +2050,10 @@ mod tests {
 
     #[test]
     fn a_removal_says_what_went_with_the_profile() {
-        assert_eq!(removal_note("Prod", 0, None), "Removed Prod.");
+        assert_eq!(removal_note("Prod", None), "Removed Prod.");
         assert_eq!(
-            removal_note("Prod", 1, None),
-            "Removed Prod and its saved query."
-        );
-        assert_eq!(
-            removal_note("Prod", 7, None),
-            "Removed Prod and its 7 saved queries."
-        );
-        // The count is not mentioned when the files are still there to count.
-        assert_eq!(
-            removal_note("Prod", 7, Some("permission denied".into())),
-            "Removed Prod, but its saved queries are still on disk: permission denied"
+            removal_note("Prod", Some("permission denied".into())),
+            "Removed Prod, but its unsaved buffers are still on disk: permission denied"
         );
     }
 }

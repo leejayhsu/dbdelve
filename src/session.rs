@@ -253,10 +253,9 @@ pub(crate) struct Session {
     /// The same hazard for the name field: an unfocused input asks for a name
     /// nobody can type into.
     pub(crate) save_name_needs_focus: bool,
-    pub(crate) saved_queries: Vec<String>,
     /// The statements this profile has run, newest first. Held rather than read
-    /// off disk when the palette opens, for the reason `saved_queries` is: the
-    /// list is wanted while a list is being built, which is a frame.
+    /// off disk when the palette opens: the list is wanted while a list is
+    /// being built, which is a frame.
     pub(crate) history: Vec<String>,
     pub(crate) save_name: Entity<InputState>,
     /// The page in front, and where to jump to once it is typed over: see
@@ -267,18 +266,12 @@ pub(crate) struct Session {
     /// from one that is being typed over.
     pub(crate) page_shown: usize,
     pub(crate) naming: bool,
-    pub(crate) pending_delete: Option<String>,
-    /// The saved query `cmd+w` is asking about.
-    ///
-    /// A saved query has no closed state — it is in the strip while its file
-    /// exists and gone when it does not — so closing its tab is deleting it,
-    /// and it is the one tab that says so before it goes. Separate from
-    /// `pending_delete`, which is the chip's own quieter two-click arming.
-    pub(crate) pending_close: Option<String>,
+    /// Set when the profile comes to the front, so its saved queries are read
+    /// again on the next frame: see `Workspace::reread_saved_queries`.
+    pub(crate) reread_saved: bool,
     /// The close `cmd+w` is asking about, because the tab it names holds cell
     /// edits nobody has applied. Held as the target rather than the tab, so
-    /// confirming runs exactly the close the keystroke had decided on --
-    /// including a saved query's own second question.
+    /// confirming runs exactly the close the keystroke had decided on.
     pub(crate) pending_discard: Option<CloseTarget>,
     pub(crate) notice: Option<String>,
     /// The generated batch a relation tab is showing before it runs. That tab
@@ -582,7 +575,7 @@ impl Session {
         )
         .detach();
 
-        let saved_queries = store::saved_queries(&id);
+        let saved_queries = store::saved_queries();
         // A tab naming a query whose file has gone comes back as the unsaved
         // buffer it now is, rather than as a tab pointing at nothing.
         let stored_queries = stored_queries
@@ -627,14 +620,12 @@ impl Session {
             explorer_highlights: Arc::new(HashMap::new()),
             editor_needs_focus: true,
             save_name_needs_focus: false,
-            saved_queries,
             history: store::history(&id),
             save_name,
             page_input,
             page_shown: 0,
             naming: false,
-            pending_delete: None,
-            pending_close: None,
+            reread_saved: false,
             pending_discard: None,
             notice,
             apply_review: None,
@@ -704,18 +695,24 @@ impl Session {
     }
 
     /// Every chip the strip draws, left to right: the dragged order first,
-    /// then anything newer than it in the default one -- unsaved buffers, saved
-    /// queries, objects.
+    /// then anything newer than it in the default one -- query buffers, saved
+    /// or not, then objects.
     pub(crate) fn strip_order(&self) -> Vec<TabKey> {
-        let chips: Vec<TabKey> = self
-            .queries
+        strip_order(self.default_order(), &self.tab_order)
+    }
+
+    /// The strip's chips before any drag: a saved query is in it only while
+    /// its buffer is open, since the library in the sidebar is where every
+    /// saved query is listed.
+    pub(crate) fn default_order(&self) -> Vec<TabKey> {
+        self.queries
             .iter()
-            .filter(|tab| tab.open_query.is_none())
-            .map(|tab| TabKey::Unsaved(tab.id))
-            .chain(self.saved_queries.iter().cloned().map(TabKey::Saved))
+            .map(|tab| match &tab.open_query {
+                Some(name) => TabKey::Saved(name.clone()),
+                None => TabKey::Unsaved(tab.id),
+            })
             .chain(self.objects.iter().map(|tab| TabKey::Object(tab.id)))
-            .collect();
-        strip_order(chips, &self.tab_order)
+            .collect()
     }
 
     /// Put a chip just opened at the right end of the strip as it is drawn.
@@ -737,8 +734,7 @@ impl Session {
         self.tab_order = order;
     }
 
-    /// The tabs behind the strip's chips, left to right. A saved query with
-    /// no buffer open is a chip with no tab, and is not here.
+    /// The tabs behind the strip's chips, left to right.
     pub(crate) fn strip_tabs(&self) -> Vec<Tab> {
         self.strip_order()
             .iter()
@@ -979,8 +975,6 @@ impl Session {
     /// has no dispatch path, so the keyboard goes dead until something is
     /// clicked.
     pub(crate) fn clear_prompts(&mut self) {
-        self.pending_delete = None;
-        self.pending_close = None;
         self.pending_discard = None;
         self.naming = false;
         self.save_name_needs_focus = false;
@@ -1058,8 +1052,8 @@ pub(crate) enum CloseTarget {
     /// Close it. It is a view onto something the database still holds, and
     /// reopening it costs a click.
     Object(u64),
-    /// Ask first. A saved query is listed while its file exists and gone when
-    /// it does not, so closing its tab is deleting it.
+    /// Write its buffer back to its file and close it. The query stays in the
+    /// library; deleting it is the sidebar's.
     SavedQuery(String),
     /// Close it. An unsaved buffer is a scratch pad someone is done with; its text goes with it, which is what closing an
     /// unnamed buffer means everywhere else.
@@ -1068,8 +1062,7 @@ pub(crate) enum CloseTarget {
 
 impl CloseTarget {
     /// The tab this close takes out of the strip. A saved query names its file
-    /// rather than its tab, so the strip is what says which tab that is -- and
-    /// `None` is a saved query with no tab open, which no close comes from.
+    /// rather than its tab, so the session is what says which tab that is.
     pub(crate) fn tab(&self, session: &Session) -> Option<Tab> {
         match self {
             Self::Object(id) => Some(Tab::Object(*id)),
@@ -1684,7 +1677,7 @@ impl QueryTab {
         cx: &mut Context<Workspace>,
     ) -> (Self, Option<String>) {
         let text = match &stored.name {
-            Some(name) => store::read_query(profile_id, name),
+            Some(name) => store::read_query(name),
             None => store::read_scratch(profile_id, stored.id),
         };
         let (sql, notice) = match text {
@@ -2195,12 +2188,16 @@ pub(crate) enum QueryState {
 /// still someone's unsaved work, and a tab switch is no longer the moment it
 /// gets written. The first failure is the one reported and the rest are still
 /// attempted — a full disk must not cost more buffers than it has to.
-pub(crate) fn write_buffer(profile: &Profile, cx: &App) -> Result<(), String> {
+///
+/// `saved` says whether the buffers holding saved queries are written too:
+/// see `Workspace::persist_buffers` for the one caller that leaves them.
+pub(crate) fn write_buffer(profile: &Profile, saved: bool, cx: &App) -> Result<(), String> {
     let mut failure = None;
     for tab in &profile.session.queries {
         let sql = tab.editor.read(cx).value().to_string();
         let written = match &tab.open_query {
-            Some(name) => store::write_query(&profile.id, name, &sql),
+            Some(name) if saved => store::write_query(name, &sql),
+            Some(_) => Ok(()),
             None => store::write_scratch(&profile.id, tab.id, &sql),
         };
         if let Err(message) = written {
@@ -3033,14 +3030,14 @@ mod tests {
     }
 
     #[test]
-    fn only_the_tab_that_is_a_file_is_asked_about_before_it_closes() {
+    fn a_saved_query_closes_as_its_file_and_the_rest_as_their_tabs() {
         let saved = |name: &str| CloseTarget::SavedQuery(name.to_string());
 
         assert_eq!(close_target(Tab::Object(3), None), CloseTarget::Object(3));
         assert_eq!(close_target(Tab::Query(0), Some("daily")), saved("daily"));
         // Any unsaved buffer, the last one too, is a scratch pad someone is
-        // done with: it goes without a question, the way an unnamed buffer
-        // does everywhere.
+        // done with: it goes with its text, the way an unnamed buffer does
+        // everywhere.
         assert_eq!(close_target(Tab::Query(7), None), CloseTarget::Buffer(7));
         // What the query tab happens to be holding says nothing about an
         // object tab, which is the one in front.

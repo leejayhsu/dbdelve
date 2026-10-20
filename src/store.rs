@@ -15,6 +15,12 @@ const NAME: &str = "dbdelve";
 /// only for tab 0 -- see [`read_scratch`].
 const LEGACY_SCRATCH_FILE: &str = ".scratch.sql";
 const HISTORY_FILE: &str = ".history.jsonl";
+/// The one directory every saved query lives under, whichever connection it
+/// was saved from.
+const LIBRARY_DIRECTORY: &str = "library";
+/// Left in a profile's own directory once its saved queries have been copied
+/// into the library -- see [`adopt_saved_queries`].
+const ADOPTED_FILE: &str = ".adopted";
 /// How far back the history reads, and what [`compact_history`] leaves on
 /// disk once the slack is used up.
 pub const HISTORY_DEPTH: usize = 200;
@@ -609,42 +615,85 @@ fn keychain_entry(profile_id: &str) -> Result<keyring::Entry, String> {
         .map_err(|error| format!("Could not reach the keychain: {error}"))
 }
 
-pub fn saved_queries(profile_id: &str) -> Vec<String> {
-    let Ok(directory) = query_directory(profile_id) else {
+/// Every saved query in the library, by its path under the library without
+/// the `.sql`: `daily`, or `reports/daily` for one in a folder. The separator
+/// is `/` on every platform, since the name is what the sidebar and the
+/// profile file carry, not a path.
+///
+/// One library for every connection: a saved query is SQL someone wants to
+/// keep, and which connection it runs on is whichever is in front when it is
+/// opened.
+pub fn saved_queries() -> Vec<String> {
+    let Ok(directory) = library_directory() else {
         return Vec::new();
     };
-    let Ok(entries) = fs::read_dir(directory) else {
-        return Vec::new();
-    };
-    let mut names = entries
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry
-                .file_name()
-                .to_str()?
-                .strip_suffix(".sql")?
-                .to_string();
-            validate_query_name(&name).ok()?;
-            Some(name)
-        })
-        .collect::<Vec<_>>();
+    let mut names = Vec::new();
+    collect_queries(&directory, "", &mut names);
     names.sort();
     names
 }
 
-pub fn read_query(profile_id: &str, name: &str) -> Result<Option<String>, String> {
-    read_file(&query_path(profile_id, name)?)
+/// Walks the library without following links, so a link back up the tree
+/// cannot make the walk endless. A name the validator refuses is skipped
+/// rather than listed: it could not be opened, written or deleted.
+fn collect_queries(directory: &Path, prefix: &str, names: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Some(file_name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            if unsafe_component(&file_name).is_none() {
+                collect_queries(&entry.path(), &format!("{prefix}{file_name}/"), names);
+            }
+            continue;
+        }
+        let Some(stem) = file_name.strip_suffix(".sql") else {
+            continue;
+        };
+        let name = format!("{prefix}{stem}");
+        if validate_query_name(&name).is_ok() {
+            names.push(name);
+        }
+    }
 }
 
-pub fn write_query(profile_id: &str, name: &str, sql: &str) -> Result<(), String> {
-    write_file(&query_path(profile_id, name)?, sql)
+pub fn read_query(name: &str) -> Result<Option<String>, String> {
+    read_file(&query_path(name)?)
 }
 
-/// Every query a profile saved, on its way out with the profile.
+pub fn write_query(name: &str, sql: &str) -> Result<(), String> {
+    write_file(&query_path(name)?, sql)
+}
+
+/// The folders a deleted query leaves empty go with it: folders exist only to
+/// hold queries, so an empty one is nothing the sidebar could show.
+pub fn delete_query(name: &str) -> Result<(), String> {
+    let path = query_path(name)?;
+    fs::remove_file(&path)
+        .map_err(|error| format!("Could not delete {}: {error}", path.display()))?;
+    let library = library_directory()?;
+    let mut folder = path.parent();
+    while let Some(directory) = folder.filter(|directory| *directory != library) {
+        if fs::remove_dir(directory).is_err() {
+            break;
+        }
+        folder = directory.parent();
+    }
+    Ok(())
+}
+
+/// A profile's own directory, on its way out with the profile: its unsaved
+/// buffers and its history. Saved queries are in the library and stay.
 ///
 /// `profile_id` derives from the name, so a profile recreated under the name of
 /// a removed one is handed the same id -- and would open a dead profile's
-/// queries as its own. Leaving the directory behind is what makes that happen.
+/// buffers as its own. Leaving the directory behind is what makes that happen.
 pub fn delete_queries(profile_id: &str) -> Result<(), String> {
     let directory = query_directory(profile_id)?;
     match fs::remove_dir_all(&directory) {
@@ -654,13 +703,75 @@ pub fn delete_queries(profile_id: &str) -> Result<(), String> {
     }
 }
 
-pub fn delete_query(profile_id: &str, name: &str) -> Result<(), String> {
-    let path = query_path(profile_id, name)?;
-    fs::remove_file(&path).map_err(|error| format!("Could not delete {}: {error}", path.display()))
+/// Copies the queries a profile saved before there was one library into it,
+/// once, and answers which name each now has there.
+///
+/// Copied, not moved, so an older build run against the same directory still
+/// finds them. The marker is what makes it once: without it, a query deleted
+/// from the library would come back from its old copy on the next launch. A
+/// name the library already holds with other text gets the profile's id after
+/// it rather than overwriting what is there; the same text is the same query
+/// and is not copied twice.
+pub fn adopt_saved_queries(profile_id: &str) -> Result<HashMap<String, String>, String> {
+    let directory = query_directory(profile_id)?;
+    let marker = directory.join(ADOPTED_FILE);
+    let mut adopted = HashMap::new();
+    if marker.exists() || !directory.is_dir() {
+        return Ok(adopted);
+    }
+    let Ok(entries) = fs::read_dir(&directory) else {
+        return Ok(adopted);
+    };
+    let mut names = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry
+                .file_name()
+                .to_str()?
+                .strip_suffix(".sql")?
+                .to_string();
+            unsafe_component(&name).is_none().then_some(name)
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    for name in names {
+        let Some(sql) = read_file(&directory.join(format!("{name}.sql")))? else {
+            continue;
+        };
+        let target = adopted_name(&name, profile_id, &sql)?;
+        if read_query(&target)?.is_none() {
+            write_query(&target, &sql)?;
+        }
+        adopted.insert(name, target);
+    }
+    write_file(&marker, "")?;
+    Ok(adopted)
 }
 
+/// `name` itself when the library has no query by that name or has this very
+/// text under it, otherwise the first `name (profile)` that is free.
+fn adopted_name(name: &str, profile_id: &str, sql: &str) -> Result<String, String> {
+    let candidates = [name.to_string(), format!("{name} ({profile_id})")]
+        .into_iter()
+        .chain((2..).map(|count| format!("{name} ({profile_id} {count})")));
+    for candidate in candidates {
+        match read_query(&candidate)? {
+            None => return Ok(candidate),
+            Some(existing) if existing == sql => return Ok(candidate),
+            Some(_) => {}
+        }
+    }
+    unreachable!("an endless list of candidates ends only by returning")
+}
+
+/// A name may hold folders, `reports/daily`, each part held to what any path
+/// component is. A backslash is refused rather than read as a separator, so a
+/// name means the same folders on every platform.
 pub fn validate_query_name(name: &str) -> Result<(), String> {
-    match unsafe_component(name) {
+    if name.contains('\\') {
+        return Err("Query name contains a backslash.".to_string());
+    }
+    match name.split('/').find_map(unsafe_component) {
         Some(reason) => Err(format!("Query name {reason}.")),
         None => Ok(()),
     }
@@ -1045,9 +1156,23 @@ fn scratch_file(tab: u64) -> String {
     format!(".scratch-{tab}.sql")
 }
 
-fn query_path(profile_id: &str, name: &str) -> Result<PathBuf, String> {
+fn library_directory() -> Result<PathBuf, String> {
+    Ok(dbdelve_directory()?.join(LIBRARY_DIRECTORY))
+}
+
+/// Joined a part at a time rather than as one `a/b` string, so the path is
+/// spelled with the platform's own separator.
+fn query_path(name: &str) -> Result<PathBuf, String> {
     validate_query_name(name)?;
-    Ok(query_directory(profile_id)?.join(format!("{name}.sql")))
+    let mut path = library_directory()?;
+    let mut parts = name.split('/').peekable();
+    while let Some(part) = parts.next() {
+        match parts.peek() {
+            Some(_) => path.push(part),
+            None => path.push(format!("{part}.sql")),
+        }
+    }
+    Ok(path)
 }
 
 fn grids_directory(profile_id: &str) -> Result<PathBuf, String> {
@@ -2141,7 +2266,11 @@ open_objects = []
             "..",
             ".scratch",
             "../secrets",
-            "a/b",
+            "reports/../secrets",
+            "reports/.hidden",
+            "reports//daily",
+            "/daily",
+            "reports/",
             "a\\b",
             "a\0b",
         ] {
@@ -2544,8 +2673,81 @@ open_objects = []
     }
 
     #[test]
+    fn the_library_holds_queries_in_folders_and_drops_a_folder_left_empty() {
+        with_home(|| {
+            write_query("daily", "SELECT 1").expect("a query must write");
+            write_query("reports/weekly", "SELECT 7").expect("a nested query must write");
+            write_query("reports/q1/sales", "SELECT 90").expect("a deeper one too");
+            assert_eq!(
+                saved_queries(),
+                ["daily", "reports/q1/sales", "reports/weekly"]
+            );
+            assert_eq!(read_query("reports/weekly"), Ok(Some("SELECT 7".into())));
+
+            delete_query("reports/q1/sales").expect("a nested query must delete");
+            assert!(
+                !dbdelve_directory()
+                    .unwrap()
+                    .join("library/reports/q1")
+                    .exists()
+            );
+            // A folder still holding a query stays.
+            assert!(
+                dbdelve_directory()
+                    .unwrap()
+                    .join("library/reports")
+                    .exists()
+            );
+            assert_eq!(saved_queries(), ["daily", "reports/weekly"]);
+        });
+    }
+
+    #[test]
+    fn a_profiles_saved_queries_are_adopted_into_the_library_once() {
+        with_home(|| {
+            let legacy = dbdelve_directory().unwrap().join("queries");
+            fs::create_dir_all(legacy.join("prod")).unwrap();
+            fs::create_dir_all(legacy.join("dev")).unwrap();
+            fs::write(legacy.join("prod/daily.sql"), "SELECT 1").unwrap();
+            fs::write(legacy.join("prod/.scratch-0.sql"), "draft").unwrap();
+            fs::write(legacy.join("dev/daily.sql"), "SELECT 2").unwrap();
+            fs::write(legacy.join("dev/same.sql"), "SELECT 3").unwrap();
+            write_query("same", "SELECT 3").unwrap();
+
+            let prod = adopt_saved_queries("prod").expect("prod must adopt");
+            let dev = adopt_saved_queries("dev").expect("dev must adopt");
+
+            assert_eq!(prod, HashMap::from([("daily".into(), "daily".into())]));
+            // Other text under a name already taken keeps both, and the same
+            // text is the same query.
+            assert_eq!(
+                dev,
+                HashMap::from([
+                    ("daily".into(), "daily (dev)".into()),
+                    ("same".into(), "same".into()),
+                ])
+            );
+            assert_eq!(read_query("daily (dev)"), Ok(Some("SELECT 2".into())));
+            assert_eq!(saved_queries(), ["daily", "daily (dev)", "same"]);
+
+            // Deleted from the library, it stays deleted.
+            delete_query("daily").unwrap();
+            assert_eq!(adopt_saved_queries("prod"), Ok(HashMap::new()));
+            assert_eq!(read_query("daily"), Ok(None));
+            // The old copy is left for an older build.
+            assert!(legacy.join("prod/daily.sql").exists());
+        });
+    }
+
+    #[test]
     fn ordinary_query_names_are_accepted() {
-        for name in ["daily report", "v1.2 counts", "accounts", "-x-"] {
+        for name in [
+            "daily report",
+            "v1.2 counts",
+            "accounts",
+            "-x-",
+            "reports/daily",
+        ] {
             assert!(validate_query_name(name).is_ok(), "{name:?}");
         }
     }
