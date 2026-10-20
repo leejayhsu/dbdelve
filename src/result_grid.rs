@@ -9,7 +9,7 @@ use gpui::{
 use gpui_component::{
     InteractiveElementExt,
     input::{Input, InputState},
-    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
+    menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem},
     table::TableEvent,
     table::{Column, TableDelegate, TableState},
 };
@@ -1757,6 +1757,16 @@ impl ResultGrid {
         self.has_default.contains(&col)
     }
 
+    /// The values the column's type admits, which its open input offers as a
+    /// dropdown beside the text. Empty for a type that admits whatever parses.
+    pub fn choices(&self, col: usize) -> &[String] {
+        self.result
+            .edit
+            .as_ref()
+            .and_then(|edit| edit.choices.get(col))
+            .map_or(&[], Vec::as_slice)
+    }
+
     /// The row's table and its whole primary key, named and valued, or nothing.
     ///
     /// The same question [`ResultGrid::editable`] asks, answered for a whole row
@@ -2798,6 +2808,75 @@ impl TableDelegate for ResultGrid {
 }
 
 impl ResultGrid {
+    /// The dropdown an open input carries when its column's type admits only
+    /// a few values. Beside the input rather than in place of it, so a label
+    /// can still be typed, and a Read-only cell's value still selected and
+    /// copied out.
+    fn choice_menu(
+        &self,
+        row: usize,
+        col: usize,
+        input: &Entity<InputState>,
+        palette: crate::theme::Theme,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Option<impl IntoElement + use<>> {
+        let choices = self.choices(col);
+        if choices.is_empty() {
+            return None;
+        }
+        let choices = choices.to_vec();
+        let current = match self.pending_at(row, col).map(|pending| &pending.value) {
+            Some(NewValue::Value(value)) => Some(value.to_string()),
+            Some(NewValue::Null | NewValue::Default) => None,
+            None => self.cell(row, col).map(str::to_string),
+        };
+        let table = cx.entity().downgrade();
+        let input = input.clone();
+        Some(
+            icon_button(
+                ("choices", row * self.columns.len() + col),
+                icon::CHEVRON_DOWN,
+                Tone::Quiet,
+                Control::Inline,
+                palette,
+            )
+            .dropdown_menu(move |menu, _, _| {
+                choices.iter().fold(
+                    menu.scrollable(true).max_h(px(layout::MENU_MAX_HEIGHT)),
+                    |menu, value| {
+                        menu.menu_with_check(
+                            value.clone(),
+                            current.as_deref() == Some(value.as_str()),
+                            Box::new(crate::SetCellValue {
+                                value: value.clone(),
+                            }),
+                        )
+                    },
+                )
+            })
+            // The menu took the keyboard from the input. Dismissed without a
+            // pick, it hands it back, or `enter` would commit nothing; after
+            // a pick the input is gone, and focusing it would leave the window
+            // with nothing focused at all.
+            .on_open_change(move |open, window, cx| {
+                if *open {
+                    return;
+                }
+                let input = input.clone();
+                let _ = table.update(cx, |table, cx| {
+                    if table
+                        .delegate()
+                        .editing
+                        .as_ref()
+                        .is_some_and(|editing| editing.input.as_ref() == Some(&input))
+                    {
+                        input.focus_handle(cx).focus(window, cx);
+                    }
+                });
+            }),
+        )
+    }
+
     fn data_th(
         &mut self,
         col_ix: usize,
@@ -3024,6 +3103,7 @@ impl ResultGrid {
                             .text_size(px(layout::grid(layout::TEXT_MD))),
                     ),
                 )
+                .children(self.choice_menu(row_ix, col_ix, &input, palette, cx))
                 // The library's row click would reselect the row under the
                 // caret, the same reason the read-only cell stops it.
                 .on_click(|_, _, cx| cx.stop_propagation())
@@ -3614,6 +3694,7 @@ mod tests {
                     table: "measurements".into(),
                     columns: vec![Some("id".into()), Some("body".into()), None],
                     keys: vec![0],
+                    choices: Vec::new(),
                 }),
                 ..QueryResult::default()
             },
@@ -3637,6 +3718,7 @@ mod tests {
                     table: "measurements".into(),
                     columns: vec![Some("id".into()), Some("note".into()), Some("depth".into())],
                     keys: vec![0],
+                    choices: Vec::new(),
                 }),
                 ..QueryResult::default()
             },
@@ -3658,6 +3740,7 @@ mod tests {
                     table: "measurements".into(),
                     columns: vec![Some("id".into()), Some("body".into())],
                     keys: vec![0],
+                    choices: Vec::new(),
                 }),
                 ..QueryResult::default()
             },
@@ -3677,6 +3760,7 @@ mod tests {
                     table: "measurements".into(),
                     columns: vec![Some("id".into()), Some("body".into())],
                     keys: vec![0],
+                    choices: Vec::new(),
                 }),
                 ..QueryResult::default()
             },
@@ -4013,6 +4097,7 @@ mod tests {
                     table: "mixed_shapes".into(),
                     columns: vec![Some("_id".into()), Some("value".into())],
                     keys: vec![0],
+                    choices: Vec::new(),
                 }),
                 ..QueryResult::default()
             },
@@ -4161,6 +4246,7 @@ mod tests {
                     table: "measurements".into(),
                     columns: vec![Some("id".into()), Some("payload".into())],
                     keys: vec![0],
+                    choices: Vec::new(),
                 }),
                 ..QueryResult::default()
             },
@@ -4216,6 +4302,7 @@ mod tests {
                     table: "measurements".into(),
                     columns: vec![Some("id".into()), Some("body".into())],
                     keys: vec![0],
+                    choices: Vec::new(),
                 }),
                 ..QueryResult::default()
             },
@@ -4303,6 +4390,7 @@ mod tests {
                         table: "measurements".into(),
                         columns: vec![Some("id".into()), Some("payload".into())],
                         keys: vec![0],
+                        choices: Vec::new(),
                     }),
                     ..QueryResult::default()
                 },
@@ -4340,6 +4428,7 @@ mod tests {
                             Some("value".into()),
                         ],
                         keys: vec![0],
+                        choices: Vec::new(),
                     }),
                     ..QueryResult::default()
                 },
@@ -4404,6 +4493,7 @@ mod tests {
                         table: "pets".into(),
                         columns: vec![Some("id".into()), Some("picture".into())],
                         keys: vec![0],
+                        choices: Vec::new(),
                     }),
                     ..QueryResult::default()
                 },
@@ -4414,6 +4504,20 @@ mod tests {
         assert!(grid(db::Engine::Sqlite).editable(0, 1));
         assert!(grid(db::Engine::Postgres).editable(0, 1));
         assert!(!grid(db::Engine::SqlServer).editable(0, 1));
+    }
+
+    #[test]
+    fn a_column_offers_the_values_its_type_admits_and_no_other_column_does() {
+        let mut grid = editable_grid();
+        assert!(grid.choices(1).is_empty());
+
+        if let Some(edit) = grid.result.edit.as_mut() {
+            edit.choices = vec![Vec::new(), vec!["draft".into(), "sent".into()]];
+        }
+        assert_eq!(grid.choices(1), ["draft", "sent"]);
+        assert!(grid.choices(0).is_empty());
+        // Shorter than the columns, as a describe that typed only some may be.
+        assert!(grid.choices(2).is_empty());
     }
 
     #[test]

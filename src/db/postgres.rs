@@ -10,7 +10,10 @@ use futures_util::{FutureExt, StreamExt, future::Fuse};
 use geozero::{CoordDimensions, ToWkt, wkb::Ewkb};
 use tokio::runtime::Runtime;
 use tokio_postgres::{
-    CancelToken, NoTls, SimpleQueryMessage, SimpleQueryStream, config::Host, error::SqlState,
+    CancelToken, NoTls, SimpleQueryMessage, SimpleQueryStream,
+    config::Host,
+    error::SqlState,
+    types::{Kind, Type},
 };
 
 use crate::tls;
@@ -1199,6 +1202,8 @@ struct ProbedColumn {
     table: Option<u32>,
     /// Postgres's own identity for the column within that table.
     attribute: Option<i16>,
+    /// An enum's labels in their declared order, empty for any other type.
+    labels: Vec<String>,
 }
 
 /// What each column a statement would return is, in order.
@@ -1226,10 +1231,21 @@ fn describe_columns(client: &mut Client, sql: &str) -> Vec<ProbedColumn> {
                     type_name: column.type_().name().to_string(),
                     table: column.table_oid(),
                     attribute: column.column_id(),
+                    labels: enum_labels(column.type_()),
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The labels of an enum, or of the enum under a domain. The driver already
+/// read them from `pg_enum` to prepare the statement, so asking costs nothing.
+fn enum_labels(type_: &Type) -> Vec<String> {
+    match type_.kind() {
+        Kind::Enum(labels) => labels.clone(),
+        Kind::Domain(base) => enum_labels(base),
+        _ => Vec::new(),
+    }
 }
 
 /// The one table every column that came from a table came from.
@@ -1331,6 +1347,7 @@ fn resolve_edit_target(probed: &[ProbedColumn], table: &KeyedTable) -> Option<Ed
             })
             .collect(),
         keys,
+        choices: probed.iter().map(|column| column.labels.clone()).collect(),
     })
 }
 
@@ -1771,6 +1788,7 @@ mod tests {
                 type_name: (*type_name).to_string(),
                 table: *table,
                 attribute: *attribute,
+                labels: Vec::new(),
             })
             .collect()
     }
@@ -2294,6 +2312,45 @@ mod tests {
             vec![Some("id".to_string()), None, Some("name".to_string())]
         );
         assert_eq!(target.keys, vec![0]);
+    }
+
+    #[test]
+    fn an_enum_offers_its_labels_in_declared_order_and_so_does_a_domain_over_one() {
+        let plan = Type::new(
+            "account_plan".into(),
+            90_001,
+            Kind::Enum(vec!["free".into(), "team".into(), "enterprise".into()]),
+            "public".into(),
+        );
+        let paid = Type::new(
+            "paid_plan".into(),
+            90_002,
+            Kind::Domain(plan.clone()),
+            "public".into(),
+        );
+
+        assert_eq!(enum_labels(&plan), ["free", "team", "enterprise"]);
+        assert_eq!(enum_labels(&paid), ["free", "team", "enterprise"]);
+        assert!(enum_labels(&Type::TEXT).is_empty());
+    }
+
+    #[test]
+    fn an_edit_target_carries_each_columns_labels_by_position() {
+        let mut columns = probed(&[
+            ("int4", Some(42), Some(1)),
+            ("account_plan", Some(42), Some(2)),
+        ]);
+        columns[1].labels = vec!["free".into(), "team".into()];
+        let target = resolve_edit_target(&columns, &keyed(&[(1, "id", true), (2, "plan", false)]))
+            .expect("one table with its key present is editable");
+
+        assert_eq!(
+            target.choices,
+            vec![
+                Vec::<String>::new(),
+                vec!["free".to_string(), "team".to_string()]
+            ]
+        );
     }
 
     #[test]
@@ -3075,6 +3132,28 @@ mod tests {
             vec![Some("name".to_string()), Some("id".to_string())]
         );
         assert_eq!(edit.keys, vec![1]);
+    }
+
+    #[test]
+    #[ignore = "requires the repository development database configured through PG*"]
+    fn live_an_enum_column_offers_its_labels_to_the_editor() {
+        let result = Connection::open(&live_config())
+            .expect("connection should open")
+            .query("SELECT id, plan FROM accounts", Fetch::default())
+            .expect("query should succeed");
+        let edit = result.edit.expect("accounts has a primary key");
+
+        assert_eq!(
+            edit.choices,
+            vec![
+                Vec::<String>::new(),
+                vec![
+                    "free".to_string(),
+                    "team".to_string(),
+                    "enterprise".to_string()
+                ],
+            ]
+        );
     }
 
     #[test]

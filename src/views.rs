@@ -1471,6 +1471,7 @@ fn render_results(
                 .on_action(cx.listener(Workspace::set_null))
                 .on_action(cx.listener(Workspace::set_empty))
                 .on_action(cx.listener(Workspace::set_default))
+                .on_action(cx.listener(Workspace::set_cell_value))
                 .on_action(cx.listener(Workspace::request_write_mode))
                 .on_action(cx.listener(Workspace::delete_row))
                 .on_action(cx.listener(Workspace::follow_foreign_key))

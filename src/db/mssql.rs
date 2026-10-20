@@ -1817,6 +1817,7 @@ fn resolve_edit_target(
             })
             .collect(),
         keys,
+        choices: Vec::new(),
     })
 }
 

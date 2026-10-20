@@ -815,6 +815,17 @@ impl Workspace {
         self.stage_value(NewValue::Default, window, cx);
     }
 
+    /// A label picked from an enum cell's dropdown: the same write as typing it
+    /// into the input and pressing `enter`.
+    pub(crate) fn set_cell_value(
+        &mut self,
+        action: &SetCellValue,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.stage_value(NewValue::Value(action.value.clone().into()), window, cx);
+    }
+
     /// The grid's own gestures stage on the active cell.
     fn stage_value(&mut self, value: NewValue, window: &mut Window, cx: &mut Context<Self>) {
         let Some(cell) = self

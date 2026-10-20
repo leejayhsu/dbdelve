@@ -696,6 +696,7 @@ fn edit_target(
         table,
         columns: origins,
         keys,
+        choices: Vec::new(),
     })
 }
 

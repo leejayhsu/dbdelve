@@ -63,6 +63,14 @@ pub(crate) struct CopyRows {
     pub(crate) kind: RowsAs,
 }
 
+/// Stage one of the values the active cell's type admits, picked from the
+/// dropdown its open input carries.
+#[derive(Clone, PartialEq, Eq, Deserialize, Action)]
+#[action(namespace = dbdelve, no_json)]
+pub(crate) struct SetCellValue {
+    pub(crate) value: String,
+}
+
 /// The arrow on a key cell: find which relations hold rows that reference the
 /// key in the active cell, and offer them.
 #[derive(Clone, PartialEq, Eq, Deserialize, Action)]
