@@ -673,6 +673,7 @@ impl Workspace {
             Command::ToggleSidebar => self.toggle_sidebar(&ToggleSidebar, window, cx),
             Command::ToggleRowPanel => self.toggle_row_panel(&ToggleRowPanel, window, cx),
             Command::ToggleRowEdit => self.toggle_row_edit(&ToggleRowEdit, window, cx),
+            Command::ToggleResults => self.toggle_results(&ToggleResults, window, cx),
             // Explicit, because the palette still holds focus here and would
             // read as the chrome.
             Command::ResetEditorZoom => self.set_zoom(FontSlot::Editor, 100, cx),

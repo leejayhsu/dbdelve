@@ -1344,6 +1344,9 @@ pub(crate) struct QueryTab {
     /// Whether this tab's row panel shows inputs rather than values. Held as
     /// the fold is.
     pub(crate) row_panel_editing: bool,
+    /// Whether this tab's results are folded away, leaving the editor the
+    /// whole surface. Not persisted, like `row_panel_folded`.
+    pub(crate) results_hidden: bool,
     /// What this tab's row panel is filtered by. The field is one for the
     /// window (`RowPanel::search`); this is what it shows while the tab is in
     /// front. Not persisted.
@@ -1793,6 +1796,7 @@ impl QueryTab {
             showing_plan: false,
             row_panel_folded: false,
             row_panel_editing: false,
+            results_hidden: false,
             row_panel_filter: Default::default(),
             row_panel_split: cx.new(|_| ResizableState::default()),
         };

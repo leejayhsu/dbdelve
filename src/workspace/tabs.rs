@@ -58,6 +58,25 @@ impl Workspace {
         cx.notify();
     }
 
+    pub(crate) fn toggle_results(
+        &mut self,
+        _: &ToggleResults,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(profile) = self.profile_mut() else {
+            return;
+        };
+        // An object tab has no editor to give the room to.
+        let Tab::Query(id) = profile.session.active else {
+            return;
+        };
+        if let Some(tab) = profile.session.query_tab_mut(id) {
+            tab.results_hidden = !tab.results_hidden;
+        }
+        cx.notify();
+    }
+
     /// The keystroke for the pencil. It turns Edit on only where the pencil
     /// is drawn, a row with something in it to edit, but always turns it off,
     /// so a tab whose rows stopped being editable is not left stuck in it.

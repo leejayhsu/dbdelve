@@ -22,7 +22,7 @@ use icondata_core::IconData;
 /// The gpui-component widgets ask for their own paths — those are Lucide names
 /// too, so they resolve here as well. Add a row when something asks for one;
 /// an unlisted path simply draws nothing.
-const ICONS: [(&str, &IconData); 66] = [
+const ICONS: [(&str, &IconData); 67] = [
     ("icons/git-fork.svg", icondata_lu::LuGitFork),
     ("icons/chevron-down.svg", icondata_lu::LuChevronDown),
     ("icons/chevron-right.svg", icondata_lu::LuChevronRight),
@@ -64,6 +64,7 @@ const ICONS: [(&str, &IconData); 66] = [
     ("icons/history.svg", icondata_lu::LuHistory),
     ("icons/panel-left.svg", icondata_lu::LuPanelLeft),
     ("icons/panel-right.svg", icondata_lu::LuPanelRight),
+    ("icons/panel-bottom.svg", icondata_lu::LuPanelBottom),
     ("icons/copy.svg", icondata_lu::LuCopy),
     ("icons/type.svg", icondata_lu::LuType),
     ("icons/arrow-up-right.svg", icondata_lu::LuArrowUpRight),
@@ -117,6 +118,8 @@ pub mod icon {
     pub const ROW_PANEL: &str = "icons/panel-right.svg";
     /// Switches the row panel between reading a row and editing it.
     pub const EDIT: &str = "icons/pencil.svg";
+    /// Folds a query tab's results away under its editor, and brings them back.
+    pub const RESULTS_PANE: &str = "icons/panel-bottom.svg";
     /// A column header's sort state: which way the server ordered the rows, or
     /// that it could be asked to.
     pub const SORT_UP: &str = "icons/sort-ascending.svg";
@@ -278,6 +281,7 @@ mod tests {
             icon::FULL_ACCESS,
             icon::SIDEBAR,
             icon::ROW_PANEL,
+            icon::RESULTS_PANE,
             icon::SORT_UP,
             icon::SORT_DOWN,
             icon::SORTABLE,
