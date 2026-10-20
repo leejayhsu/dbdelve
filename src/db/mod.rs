@@ -2860,6 +2860,13 @@ pub struct EditTarget {
     pub columns: Vec<Option<String>>,
     /// Result-column indices that together identify one row. Never empty.
     pub keys: Vec<usize>,
+    /// The only values each result column's type admits, positionally and in
+    /// the order the type declares them: a Postgres enum's labels. Empty, or
+    /// shorter than `columns`, where a type admits whatever it parses. An
+    /// offer for the cell editor and never a check: the server is what
+    /// refuses a value outside them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

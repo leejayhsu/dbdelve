@@ -1062,6 +1062,14 @@ Decided, and not to be re-litigated:
   (`Engine::holds_read_only`). `Connection::connect` is a closure because
   holding `Arc<TursoDatabase>` directly overflows the compiler's `Send`
   evaluation of `db::Connection`. Its live test reads `dbdelve_TURSO_PATH`.
+- **Only Postgres offers an enum's labels while editing.** The describe that
+  finds a result's edit target already holds them (the driver reads `pg_enum`
+  to prepare the statement, and follows a domain to the enum under it), so
+  `EditTarget::choices` costs no round trip, and an open input on such a cell
+  carries a dropdown of them. Beside the input, not instead of it: a label can
+  still be typed, and a pick (`SetCellValue`) stages exactly what typing it
+  would, through the same gate. SQLite has no enum type, only a
+  `CHECK (… IN …)` DBDelve does not read; MySQL's `ENUM` is not wired up.
 - **Geometry is Postgres-only.** MySQL has a `GEOMETRY` type; rendering it is a
   separate decision nobody has asked for.
 - **MariaDB's `JSON` is a `longtext` with a `json_valid` check**, and is shown

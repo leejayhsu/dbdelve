@@ -2782,6 +2782,7 @@ open_objects = []
                     table: "accounts".into(),
                     columns: vec![Some("id".into()), None],
                     keys: vec![0],
+                    choices: Vec::new(),
                 }),
                 data_types: vec![Some("int4".into()), None],
                 cell_types: Vec::new(),

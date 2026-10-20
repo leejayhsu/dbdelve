@@ -1141,6 +1141,7 @@ fn edit_target(command: &Command, result: &QueryResult, database: &str) -> Optio
             .map(|name| Some(name.to_string()).filter(|name| !name.is_empty()))
             .collect(),
         keys: keys.to_vec(),
+        choices: Vec::new(),
     })
 }
 
