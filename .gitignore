@@ -26,3 +26,6 @@ HANDOFF.md
 docs/grilling.md
 docs/specs/
 docs/superpowers/
+
+# Agent worktrees are local checkouts, never part of the tree.
+.agents/worktrees/
