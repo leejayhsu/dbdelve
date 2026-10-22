@@ -1360,7 +1360,10 @@ The shape a change to the main pane has to fit (`session.rs`, with the
   `welcome_needs_focus` for the welcome surface. Reading what holds focus
   instead does not work: that is checked against the last frame, where the
   field that just closed still sat inside the same `track_focus` floor, and a
-  window left focused on a dead field has every binding dead.
+  window left focused on a dead field has every binding dead. Folding the
+  sidebar is the one place that reads focus, and it can: the sidebar is still
+  in the last frame when Toggle Sidebar runs, so `sidebar_focus` tells whether
+  the focus is about to go with it, and only then is it handed back.
 - **A profile owns a `Session`**, and a session owns two lists of tabs:
   `queries: Vec<QueryTab>` and `objects: Vec<ObjectTab>`. `Tab` is
   `Query(u64) | Object(u64)` and `active: Tab` says which is in front.
