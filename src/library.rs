@@ -62,6 +62,26 @@ pub fn moved(path: &str, from: &str, to: &str) -> Option<String> {
         .map(|rest| format!("{to}/{rest}"))
 }
 
+/// The value a query row's drag carries: the query's whole name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DraggedQuery(pub String);
+
+/// The folder a query sits in, `None` at the top level. Dropping on a query's
+/// row drops beside it, into this.
+pub fn parent(name: &str) -> Option<&str> {
+    name.rsplit_once('/').map(|(folder, _)| folder)
+}
+
+/// The name a query takes once dropped into `folder`, or the top level for
+/// `None`: the folder changes and the query's own name does not.
+pub fn dropped_into(name: &str, folder: Option<&str>) -> String {
+    let leaf = name.rsplit('/').next().unwrap_or(name);
+    match folder {
+        Some(folder) => format!("{folder}/{leaf}"),
+        None => leaf.to_string(),
+    }
+}
+
 /// The library as tree rows: folders ahead of queries at every level, each in
 /// name order, an empty folder included. Every folder is open unless
 /// `collapsed` names it, so a rebuild after a save keeps closed what was
@@ -181,6 +201,21 @@ mod tests {
         );
         assert_eq!(moved("reports-2024/sales", "reports", "old"), None);
         assert_eq!(typed_name(" reports / daily "), "reports/daily");
+    }
+
+    #[test]
+    fn a_dropped_query_keeps_its_name_and_takes_the_folder() {
+        assert_eq!(
+            dropped_into("daily", Some("reports/q1")),
+            "reports/q1/daily"
+        );
+        assert_eq!(dropped_into("reports/q1/daily", None), "daily");
+        assert_eq!(
+            dropped_into("reports/daily", Some("archive")),
+            "archive/daily"
+        );
+        assert_eq!(parent("reports/q1/daily"), Some("reports/q1"));
+        assert_eq!(parent("daily"), None);
     }
 
     #[test]

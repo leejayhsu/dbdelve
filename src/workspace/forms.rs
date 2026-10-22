@@ -14,6 +14,7 @@ use super::welcome::{self, Part, Pose};
 use super::*;
 use crate::connection_form::ConnectionTest;
 use crate::explorer::{drop_sql, select_top_sql, truncate_sql};
+use crate::library::DraggedQuery;
 use crate::scroller::{SmoothScrollable, smooth_scoped};
 use crate::sql::{Destructive, Stop};
 use crate::ui::Status;
@@ -2052,6 +2053,13 @@ impl Workspace {
                 let group = format!("library-row-{index}");
                 let delete_workspace = workspace.clone();
                 let delete_id = id.clone();
+                // A folder takes a dropped query in; a query's row stands for
+                // the folder it sits in, so a drop beside it lands there too.
+                let drop_folder = match &query {
+                    Some(name) => crate::library::parent(name).map(str::to_string),
+                    None => crate::library::folder_of(&id).map(str::to_string),
+                };
+                let drop_workspace = workspace.clone();
                 let row = ListItem::new(index)
                     .mx(px(layout::SPACE_XS))
                     .rounded(px(layout::RADIUS_CONTROL))
@@ -2062,6 +2070,17 @@ impl Workspace {
                     .pl(px(
                         layout::SPACE_SM + entry.depth() as f32 * layout::SPACE_MD
                     ))
+                    .when_some(query.clone(), |row, name| {
+                        row.on_drag(DraggedQuery(name), |dragged, _, _, cx| {
+                            cx.new(|_| dragged.clone())
+                        })
+                    })
+                    .drag_over::<DraggedQuery>(move |style, _, _, _| style.bg(t.selection))
+                    .on_drop(move |dragged: &DraggedQuery, _, cx| {
+                        _ = drop_workspace.update(cx, |workspace, cx| {
+                            workspace.move_saved_query(dragged.0.clone(), drop_folder.clone(), cx);
+                        });
+                    })
                     .child(
                         div()
                             .id(("library-row", index))
@@ -2276,6 +2295,7 @@ impl Workspace {
         let new_query = cx.entity().downgrade();
         let new_folder = new_query.clone();
         let collapse = new_query.clone();
+        let top_level = new_query.clone();
 
         div()
             .size_full()
@@ -2342,7 +2362,42 @@ impl Workspace {
                     ),
             )
             .children(naming)
-            .child(div().flex_1().min_h_0().child(content))
+            // Below the last row is the top level: a query dropped there
+            // leaves whatever folder it was in. Rows take their own drops
+            // first, so this sees only the ones that miss every row.
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .on_drop(move |dragged: &DraggedQuery, _, cx| {
+                        _ = top_level.update(cx, |workspace, cx| {
+                            workspace.move_saved_query(dragged.0.clone(), None, cx);
+                        });
+                    })
+                    .child(content),
+            )
+    }
+}
+
+/// What follows the pointer while a saved query is dragged: its name, lifted
+/// off the sidebar.
+impl Render for DraggedQuery {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = *theme(cx);
+        div()
+            .flex()
+            .items_center()
+            .gap(px(layout::SPACE_SM))
+            .px(px(layout::SPACE_SM))
+            .py(px(layout::SPACE_XS))
+            .rounded(px(layout::RADIUS_CONTROL))
+            .bg(t.overlay)
+            .border_1()
+            .border_color(t.border_strong)
+            .text_size(px(layout::chrome(layout::TEXT_MD)))
+            .text_color(t.text)
+            .child(row_icon(t, icon::SAVED_QUERY))
+            .child(self.0.clone())
     }
 }
 
