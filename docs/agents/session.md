@@ -261,6 +261,9 @@ The shape a change to the main pane has to fit (`session.rs`, with the
   deleted, through one name field above it (`Workspace::library_name`). A
   rename moves the file or directory and refuses a name already taken; a
   folder's delete takes every query in it, and its armed button says how many.
+  A query row drags (`library::DraggedQuery`) onto a folder's row, onto a
+  query's row for that query's folder, or below the rows for the top level;
+  it is a rename that keeps the query's own name (`move_saved_query`).
   Which of its folders are closed is the workspace's
   (`closed_folders`), saved with the settings as each one opens or closes and
   read back at launch, so the tree comes back as it was left; Collapse All

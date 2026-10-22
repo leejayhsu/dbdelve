@@ -1623,6 +1623,36 @@ impl Workspace {
         }
     }
 
+    /// A query dragged onto a folder, or out to the top level for `None`.
+    /// It is a rename that changes only the folder, so it refuses a name the
+    /// folder already holds rather than writing over it, and every buffer
+    /// holding the query follows it.
+    pub(crate) fn move_saved_query(
+        &mut self,
+        name: String,
+        folder: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let to = crate::library::dropped_into(&name, folder.as_deref());
+        if to == name {
+            return;
+        }
+        if let Err(message) = store::rename_query(&name, &to) {
+            self.note(message, cx);
+            return;
+        }
+        self.rename_open_query(&name, &to);
+        self.refresh_library(cx);
+        self.note(
+            match &folder {
+                Some(folder) => format!("Moved {name} into {folder}."),
+                None => format!("Moved {name} to the top level."),
+            },
+            cx,
+        );
+        self.remember_profiles(cx);
+    }
+
     /// Opens the sidebar's name field. A new query or folder is prefilled with
     /// the folder it was asked for from, a rename with the name it has.
     pub(crate) fn start_library_naming(
