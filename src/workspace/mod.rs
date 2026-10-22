@@ -257,15 +257,22 @@ pub(crate) struct Workspace {
     /// Every saved query, by name. On the workspace rather than a session:
     /// the library is one directory, whichever connection is in front.
     pub(crate) library: Vec<String>,
+    /// Every folder in the library, the empty ones included.
+    pub(crate) library_folders: Vec<String>,
+    /// The sidebar's name field, while a query or folder is being made or
+    /// renamed there.
+    pub(crate) library_name: Option<(crate::library::Naming, Entity<InputState>)>,
+    pub(crate) library_name_needs_focus: bool,
     /// The library's folders that are closed, by path. Kept here rather than
     /// read off the tree, which cannot hand its rows back, so a rebuild after a
     /// save keeps them closed and a relaunch can too: it is saved with the
     /// settings.
     pub(crate) closed_folders: HashSet<String>,
     pub(crate) library_tree: Entity<gpui_component::tree::TreeState>,
-    /// The saved query whose delete has been clicked once and is waiting for
-    /// the second.
-    pub(crate) pending_query_delete: Option<String>,
+    /// The library row, query or folder, whose delete has been clicked once
+    /// and is waiting for the second. Its row id, since a query and a folder
+    /// may share a name.
+    pub(crate) pending_library_delete: Option<String>,
     pub(crate) tab_strip: crate::tab_drag::TabStrip,
     /// Where the sidebar's edge is unless a drag has moved it. The library
     /// rescales every panel by its share when the window changes size, so this
@@ -438,9 +445,12 @@ impl Workspace {
             shell_split: cx.new(|_| ResizableState::default()),
             sidebar_split: cx.new(|_| ResizableState::default()),
             library: Vec::new(),
+            library_folders: Vec::new(),
+            library_name: None,
+            library_name_needs_focus: false,
             closed_folders: HashSet::new(),
             library_tree: cx.new(|cx| gpui_component::tree::TreeState::new(cx)),
-            pending_query_delete: None,
+            pending_library_delete: None,
             tab_strip: crate::tab_drag::TabStrip::default(),
             sidebar_width: std::cell::Cell::new(px(layout::SIDEBAR_DEFAULT_WIDTH)),
             sidebar_container: std::cell::Cell::new(px(0.)),
@@ -1303,6 +1313,11 @@ impl Render for Workspace {
         }
         if std::mem::take(&mut self.project_name_needs_focus)
             && let Some(input) = &self.project_name
+        {
+            input.focus_handle(cx).focus(window, cx);
+        }
+        if std::mem::take(&mut self.library_name_needs_focus)
+            && let Some((_, input)) = &self.library_name
         {
             input.focus_handle(cx).focus(window, cx);
         }

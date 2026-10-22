@@ -22,7 +22,7 @@ use icondata_core::IconData;
 /// The gpui-component widgets ask for their own paths — those are Lucide names
 /// too, so they resolve here as well. Add a row when something asks for one;
 /// an unlisted path simply draws nothing.
-const ICONS: [(&str, &IconData); 69] = [
+const ICONS: [(&str, &IconData); 70] = [
     ("icons/git-fork.svg", icondata_lu::LuGitFork),
     ("icons/chevron-down.svg", icondata_lu::LuChevronDown),
     ("icons/chevron-right.svg", icondata_lu::LuChevronRight),
@@ -35,6 +35,7 @@ const ICONS: [(&str, &IconData); 69] = [
         icondata_lu::LuArrowDownWideNarrow,
     ),
     ("icons/file-code.svg", icondata_lu::LuFileCode),
+    ("icons/file-plus.svg", icondata_lu::LuFilePlus),
     ("icons/trash.svg", icondata_lu::LuTrash2),
     ("icons/check.svg", icondata_lu::LuCheck),
     ("icons/save.svg", icondata_lu::LuSave),
@@ -132,6 +133,8 @@ pub mod icon {
     /// No connection colour.
     pub const NO_COLOR: &str = "icons/ban.svg";
     pub const SAVED_QUERY: &str = "icons/file-code.svg";
+    pub const NEW_QUERY: &str = "icons/file-plus.svg";
+    pub const NEW_FOLDER: &str = "icons/folder-plus.svg";
     pub const DELETE: &str = "icons/trash.svg";
     pub const SEARCH: &str = "icons/search.svg";
     pub const DATABASE: &str = "icons/database.svg";
@@ -290,6 +293,8 @@ mod tests {
             icon::SORT_DOWN,
             icon::SORTABLE,
             icon::SAVED_QUERY,
+            icon::NEW_QUERY,
+            icon::NEW_FOLDER,
             icon::DELETE,
             icon::SEARCH,
             icon::DATABASE,

@@ -252,20 +252,26 @@ The shape a change to the main pane has to fit (`session.rs`, with the
 - **Saved queries are one library for every connection**, the `library`
   directory beside `profiles.toml`, and opening one puts it in a tab of
   whichever connection is in front. A name may hold folders (`reports/daily`
-  is `library/reports/daily.sql`), always spelled with `/`; a folder exists
-  only while it holds a query, so a delete takes empty ones with it. The
-  sidebar shows the library as a tree under the database's objects
-  (`render_library`, `library.rs`), and that tree is where a query is opened
-  and deleted. Which of its folders are closed is the workspace's
+  is `library/reports/daily.sql`), always spelled with `/`. A folder is a
+  directory of its own, listed whether or not it holds a query
+  (`store::query_folders`), so one can be made before anything is saved into
+  it and stays when its last query is deleted. The sidebar shows the library
+  as a tree under the database's objects (`render_library`, `library.rs`),
+  and that tree is where a query or folder is made, opened, renamed and
+  deleted, through one name field above it (`Workspace::library_name`). A
+  rename moves the file or directory and refuses a name already taken; a
+  folder's delete takes every query in it, and its armed button says how many.
+  Which of its folders are closed is the workspace's
   (`closed_folders`), saved with the settings as each one opens or closes and
   read back at launch, so the tree comes back as it was left; Collapse All
   closes every folder there is. A closed folder no longer in the library is
   forgotten on the next read of it. The tab strip holds a saved query only while its buffer is
   open: closing the tab writes it back and leaves the query in the library;
   deleting it turns any buffer holding it, in any connection, into an unsaved
-  one rather than taking the text away. A rename follows every connection's
-  open buffer (`rename_open_query`), or the next write would put the old name
-  back.
+  one rather than taking the text away, and so does deleting the folder it is
+  in. A rename, of the query or of a folder it is in, follows every
+  connection's open buffer (`rename_open_query`), or the next write would put
+  the old name back.
 - **The library is shared, so only the profile in front writes a saved
   query.** Leaving the front writes every buffer of the profile leaving, so
   the file is never older than a profile's copy; coming to the front rereads

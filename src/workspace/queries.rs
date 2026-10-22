@@ -1223,17 +1223,7 @@ impl Workspace {
         let Some(profile) = self.profile() else {
             return;
         };
-        // Each folder trimmed as well as the whole, so `reports / daily` is
-        // the folder people meant rather than one whose name ends in a space.
-        let name = profile
-            .session
-            .save_name
-            .read(cx)
-            .value()
-            .split('/')
-            .map(str::trim)
-            .collect::<Vec<_>>()
-            .join("/");
+        let name = crate::library::typed_name(&profile.session.save_name.read(cx).value());
         if let Err(message) = store::validate_query_name(&name) {
             self.note(message, cx);
             return;
@@ -1551,21 +1541,26 @@ impl Workspace {
         }
     }
 
-    /// The sidebar row's delete: the first click arms it and the second one
-    /// means it.
-    pub(crate) fn arm_delete_saved_query(&mut self, name: String, cx: &mut Context<Self>) {
-        if self.pending_query_delete.as_deref() != Some(&name) {
-            self.pending_query_delete = Some(name);
+    /// The sidebar row's delete, by row id: the first click arms it and the
+    /// second one means it.
+    pub(crate) fn arm_library_delete(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.pending_library_delete.as_deref() != Some(&id) {
+            self.pending_library_delete = Some(id);
             cx.notify();
             return;
         }
-        self.delete_saved_query(name, cx);
+        self.pending_library_delete = None;
+        if let Some(name) = crate::library::query_of(&id) {
+            self.delete_saved_query(name.to_string(), cx);
+        } else if let Some(path) = crate::library::folder_of(&id) {
+            self.delete_query_folder(path.to_string(), cx);
+        }
     }
 
     /// Put an armed delete down again. `true` when there was one, so `escape`
     /// knows it was spent here.
-    pub(crate) fn disarm_query_delete(&mut self, cx: &mut Context<Self>) -> bool {
-        let disarmed = self.pending_query_delete.take().is_some();
+    pub(crate) fn disarm_library_delete(&mut self, cx: &mut Context<Self>) -> bool {
+        let disarmed = self.pending_library_delete.take().is_some();
         if disarmed {
             cx.notify();
         }
@@ -1577,23 +1572,164 @@ impl Workspace {
     /// copy of edits made since, and a tab vanishing from a connection that is
     /// not even in front would be no way to find that out.
     pub(crate) fn delete_saved_query(&mut self, name: String, cx: &mut Context<Self>) {
-        self.pending_query_delete = None;
         if let Err(message) = store::delete_query(&name) {
             self.note(message, cx);
             return;
         }
+        self.unsave_open_query(&name);
+        self.refresh_library(cx);
+        self.note(format!("Deleted {name}."), cx);
+        self.remember_profiles(cx);
+    }
+
+    /// A folder goes with every query in it, and each buffer holding one of
+    /// them stays open as an unsaved one, as a single delete leaves it.
+    fn delete_query_folder(&mut self, path: String, cx: &mut Context<Self>) {
+        if let Err(message) = store::delete_query_folder(&path) {
+            self.note(message, cx);
+            return;
+        }
+        let inside = self
+            .library
+            .iter()
+            .filter(|name| name.starts_with(&format!("{path}/")))
+            .cloned()
+            .collect::<Vec<_>>();
+        for name in &inside {
+            self.unsave_open_query(name);
+        }
+        self.refresh_library(cx);
+        self.note(
+            match inside.len() {
+                0 => format!("Deleted folder {path}."),
+                1 => format!("Deleted folder {path} and the query in it."),
+                count => format!("Deleted folder {path} and the {count} queries in it."),
+            },
+            cx,
+        );
+        self.remember_profiles(cx);
+    }
+
+    fn unsave_open_query(&mut self, name: &str) {
         for profile in &mut self.profiles {
-            if let Some(id) = profile.session.tab_holding(&name) {
+            if let Some(id) = profile.session.tab_holding(name) {
                 profile
                     .session
-                    .rekey(&TabKey::Saved(name.clone()), TabKey::Unsaved(id));
+                    .rekey(&TabKey::Saved(name.to_string()), TabKey::Unsaved(id));
                 if let Some(tab) = profile.session.query_tab_mut(id) {
                     tab.open_query = None;
                 }
             }
         }
+    }
+
+    /// Opens the sidebar's name field. A new query or folder is prefilled with
+    /// the folder it was asked for from, a rename with the name it has.
+    pub(crate) fn start_library_naming(
+        &mut self,
+        naming: crate::library::Naming,
+        prefill: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::library::Naming;
+        let placeholder = match naming {
+            Naming::NewQuery | Naming::RenameQuery(_) => "Query name",
+            Naming::NewFolder | Naming::RenameFolder(_) => "Folder name",
+        };
+        let input = cx.new(|cx| {
+            let mut input = InputState::new(window, cx).placeholder(placeholder);
+            input.set_value(prefill, window, cx);
+            input
+        });
+        // With the window, because a new query opens in a tab of its own.
+        cx.subscribe_in(
+            &input,
+            window,
+            |workspace, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    workspace.confirm_library_name(window, cx);
+                }
+            },
+        )
+        .detach();
+        self.library_name = Some((naming, input));
+        self.library_name_needs_focus = true;
+        self.pending_library_delete = None;
+        // The field is what was asked for, not the editor a palette or menu
+        // hands focus back to.
+        if let Some(profile) = self.profile_mut() {
+            profile.session.editor_needs_focus = false;
+        }
+        cx.notify();
+    }
+
+    /// Puts the name field away, handing focus back to whatever is in front,
+    /// since a field unmounted with focus in it takes every binding with it.
+    pub(crate) fn drop_library_name(&mut self) {
+        if self.library_name.take().is_some() {
+            self.refocus_front();
+        }
+    }
+
+    pub(crate) fn confirm_library_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::library::Naming;
+        let Some((naming, input)) = self.library_name.clone() else {
+            return;
+        };
+        let name = crate::library::typed_name(&input.read(cx).value());
+        let done = match &naming {
+            Naming::NewQuery => store::validate_query_name(&name)
+                .and_then(|()| store::create_query(&name))
+                .map(|()| format!("Created {name}.")),
+            Naming::NewFolder => store::validate_folder_name(&name)
+                .and_then(|()| store::create_query_folder(&name))
+                .map(|()| format!("Created folder {name}.")),
+            Naming::RenameQuery(from) if *from == name => Ok(String::new()),
+            Naming::RenameQuery(from) => store::validate_query_name(&name)
+                .and_then(|()| store::rename_query(from, &name))
+                .map(|()| format!("Renamed {from} to {name}.")),
+            Naming::RenameFolder(from) if *from == name => Ok(String::new()),
+            Naming::RenameFolder(from) => store::validate_folder_name(&name)
+                .and_then(|()| store::rename_query_folder(from, &name))
+                .map(|()| format!("Renamed folder {from} to {name}.")),
+        };
+        let message = match done {
+            Ok(message) => message,
+            // The field stays open with what was typed, to be put right.
+            Err(message) => {
+                self.note(message, cx);
+                return;
+            }
+        };
+        match &naming {
+            // Every connection holding a moved query open follows it, or the
+            // next write from one of them would put the old name back.
+            Naming::RenameQuery(from) => self.rename_open_query(from, &name),
+            Naming::RenameFolder(from) => {
+                for query in self.library.clone() {
+                    if let Some(to) = crate::library::moved(&query, from, &name) {
+                        self.rename_open_query(&query, &to);
+                    }
+                }
+                self.closed_folders = std::mem::take(&mut self.closed_folders)
+                    .into_iter()
+                    .map(|folder| match folder == *from {
+                        true => name.clone(),
+                        false => crate::library::moved(&folder, from, &name).unwrap_or(folder),
+                    })
+                    .collect();
+            }
+            Naming::NewQuery | Naming::NewFolder => {}
+        }
+        self.drop_library_name();
         self.refresh_library(cx);
-        self.note(format!("Deleted {name}."), cx);
+        if naming == Naming::NewQuery {
+            self.open_saved_query(name, window, cx);
+        }
+        if !message.is_empty() {
+            self.note(message, cx);
+        }
         self.remember_profiles(cx);
     }
 
@@ -1620,10 +1756,11 @@ impl Workspace {
     /// same name would start out closed for no reason anyone could see.
     pub(crate) fn refresh_library(&mut self, cx: &mut Context<Self>) {
         self.library = store::saved_queries();
-        let folders = crate::library::folders(&self.library);
+        self.library_folders = store::query_folders();
         self.closed_folders
-            .retain(|folder| folders.contains(folder));
-        let items = crate::library::tree(&self.library, &self.closed_folders);
+            .retain(|folder| self.library_folders.contains(folder));
+        let items =
+            crate::library::tree(&self.library, &self.library_folders, &self.closed_folders);
         self.library_tree
             .update(cx, |tree, cx| tree.set_items(items, cx));
         cx.notify();
@@ -1631,7 +1768,7 @@ impl Workspace {
 
     /// Close every folder in the library, so only its top level shows.
     pub(crate) fn collapse_library(&mut self, cx: &mut Context<Self>) {
-        self.closed_folders = crate::library::folders(&self.library);
+        self.closed_folders = self.library_folders.iter().cloned().collect();
         self.refresh_library(cx);
         self.remember_profiles(cx);
     }
