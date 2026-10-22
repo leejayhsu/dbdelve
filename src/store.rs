@@ -633,19 +633,34 @@ fn keychain_entry(profile_id: &str) -> Result<keyring::Entry, String> {
 /// keep, and which connection it runs on is whichever is in front when it is
 /// opened.
 pub fn saved_queries() -> Vec<String> {
-    let Ok(directory) = library_directory() else {
-        return Vec::new();
-    };
-    let mut names = Vec::new();
-    collect_queries(&directory, "", &mut names);
+    library().0
+}
+
+/// Every folder in the library, by path, the empty ones included: a folder is
+/// made on its own from the sidebar, before anything is saved into it.
+pub fn query_folders() -> Vec<String> {
+    library().1
+}
+
+fn library() -> (Vec<String>, Vec<String>) {
+    let (mut names, mut folders) = (Vec::new(), Vec::new());
+    if let Ok(directory) = library_directory() {
+        collect_queries(&directory, "", &mut names, &mut folders);
+    }
     names.sort();
-    names
+    folders.sort();
+    (names, folders)
 }
 
 /// Walks the library without following links, so a link back up the tree
 /// cannot make the walk endless. A name the validator refuses is skipped
 /// rather than listed: it could not be opened, written or deleted.
-fn collect_queries(directory: &Path, prefix: &str, names: &mut Vec<String>) {
+fn collect_queries(
+    directory: &Path,
+    prefix: &str,
+    names: &mut Vec<String>,
+    folders: &mut Vec<String>,
+) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
@@ -658,7 +673,13 @@ fn collect_queries(directory: &Path, prefix: &str, names: &mut Vec<String>) {
         };
         if kind.is_dir() {
             if unsafe_component(&file_name).is_none() {
-                collect_queries(&entry.path(), &format!("{prefix}{file_name}/"), names);
+                folders.push(format!("{prefix}{file_name}"));
+                collect_queries(
+                    &entry.path(),
+                    &format!("{prefix}{file_name}/"),
+                    names,
+                    folders,
+                );
             }
             continue;
         }
@@ -680,21 +701,65 @@ pub fn write_query(name: &str, sql: &str) -> Result<(), String> {
     write_file(&query_path(name)?, sql)
 }
 
-/// The folders a deleted query leaves empty go with it: folders exist only to
-/// hold queries, so an empty one is nothing the sidebar could show.
+/// The folder it was in stays, emptied or not: a folder can be made on its
+/// own, so one going because its last query did would be a surprise.
 pub fn delete_query(name: &str) -> Result<(), String> {
     let path = query_path(name)?;
-    fs::remove_file(&path)
-        .map_err(|error| format!("Could not delete {}: {error}", path.display()))?;
-    let library = library_directory()?;
-    let mut folder = path.parent();
-    while let Some(directory) = folder.filter(|directory| *directory != library) {
-        if fs::remove_dir(directory).is_err() {
-            break;
-        }
-        folder = directory.parent();
+    fs::remove_file(&path).map_err(|error| format!("Could not delete {}: {error}", path.display()))
+}
+
+/// An empty query, refused rather than written over when the name is taken.
+pub fn create_query(name: &str) -> Result<(), String> {
+    if read_query(name)?.is_some() {
+        return Err(format!("A query named {name} already exists."));
     }
-    Ok(())
+    write_query(name, "")
+}
+
+pub fn create_query_folder(path: &str) -> Result<(), String> {
+    let directory = folder_path(path)?;
+    if directory.exists() {
+        return Err(format!("A folder named {path} already exists."));
+    }
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Could not create {}: {error}", directory.display()))
+}
+
+/// Moves the file, so a query not open anywhere keeps its text without being
+/// read. A `to` in another folder moves it there, making the folder if need be.
+pub fn rename_query(from: &str, to: &str) -> Result<(), String> {
+    if read_query(to)?.is_some() {
+        return Err(format!("A query named {to} already exists."));
+    }
+    move_within_library(&query_path(from)?, &query_path(to)?)
+}
+
+/// Moves the folder and everything in it. A folder cannot go inside itself,
+/// which the filesystem would refuse anyway, but less clearly.
+pub fn rename_query_folder(from: &str, to: &str) -> Result<(), String> {
+    if to.starts_with(&format!("{from}/")) {
+        return Err(format!("{from} cannot be moved inside itself."));
+    }
+    let target = folder_path(to)?;
+    if target.exists() {
+        return Err(format!("A folder named {to} already exists."));
+    }
+    move_within_library(&folder_path(from)?, &target)
+}
+
+/// The folder and every query in it, nested folders included.
+pub fn delete_query_folder(path: &str) -> Result<(), String> {
+    let directory = folder_path(path)?;
+    fs::remove_dir_all(&directory)
+        .map_err(|error| format!("Could not delete {}: {error}", directory.display()))
+}
+
+fn move_within_library(from: &Path, to: &Path) -> Result<(), String> {
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create {}: {error}", parent.display()))?;
+    }
+    fs::rename(from, to).map_err(|error| format!("Could not rename {}: {error}", from.display()))
 }
 
 /// A profile's own directory, on its way out with the profile: its unsaved
@@ -777,11 +842,20 @@ fn adopted_name(name: &str, profile_id: &str, sql: &str) -> Result<String, Strin
 /// component is. A backslash is refused rather than read as a separator, so a
 /// name means the same folders on every platform.
 pub fn validate_query_name(name: &str) -> Result<(), String> {
-    if name.contains('\\') {
-        return Err("Query name contains a backslash.".to_string());
+    validate_library_path(name, "Query name")
+}
+
+/// A folder's path is held to what a query's name is, a part at a time.
+pub fn validate_folder_name(path: &str) -> Result<(), String> {
+    validate_library_path(path, "Folder name")
+}
+
+fn validate_library_path(path: &str, what: &str) -> Result<(), String> {
+    if path.contains('\\') {
+        return Err(format!("{what} contains a backslash."));
     }
-    match name.split('/').find_map(unsafe_component) {
-        Some(reason) => Err(format!("Query name {reason}.")),
+    match path.split('/').find_map(unsafe_component) {
+        Some(reason) => Err(format!("{what} {reason}.")),
         None => Ok(()),
     }
 }
@@ -1182,6 +1256,13 @@ fn query_path(name: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(path)
+}
+
+fn folder_path(path: &str) -> Result<PathBuf, String> {
+    validate_folder_name(path)?;
+    let mut directory = library_directory()?;
+    directory.extend(path.split('/'));
+    Ok(directory)
 }
 
 fn grids_directory(profile_id: &str) -> Result<PathBuf, String> {
@@ -2694,7 +2775,7 @@ open_objects = []
     }
 
     #[test]
-    fn the_library_holds_queries_in_folders_and_drops_a_folder_left_empty() {
+    fn the_library_holds_queries_in_folders_and_keeps_a_folder_left_empty() {
         with_home(|| {
             write_query("daily", "SELECT 1").expect("a query must write");
             write_query("reports/weekly", "SELECT 7").expect("a nested query must write");
@@ -2706,20 +2787,37 @@ open_objects = []
             assert_eq!(read_query("reports/weekly"), Ok(Some("SELECT 7".into())));
 
             delete_query("reports/q1/sales").expect("a nested query must delete");
-            assert!(
-                !dbdelve_directory()
-                    .unwrap()
-                    .join("library/reports/q1")
-                    .exists()
-            );
-            // A folder still holding a query stays.
-            assert!(
-                dbdelve_directory()
-                    .unwrap()
-                    .join("library/reports")
-                    .exists()
-            );
             assert_eq!(saved_queries(), ["daily", "reports/weekly"]);
+            assert_eq!(query_folders(), ["reports", "reports/q1"]);
+        });
+    }
+
+    #[test]
+    fn folders_and_queries_are_made_renamed_and_deleted_without_clobbering() {
+        with_home(|| {
+            create_query_folder("reports/q1").expect("a nested folder must make");
+            assert_eq!(query_folders(), ["reports", "reports/q1"]);
+            assert!(create_query_folder("reports").is_err());
+            assert!(create_query_folder("reports/").is_err());
+
+            create_query("reports/q1/sales").expect("an empty query must make");
+            assert_eq!(read_query("reports/q1/sales"), Ok(Some(String::new())));
+            write_query("daily", "SELECT 1").expect("a query must write");
+            assert!(create_query("daily").is_err());
+            assert_eq!(read_query("daily"), Ok(Some("SELECT 1".into())));
+
+            assert!(rename_query("daily", "reports/q1/sales").is_err());
+            rename_query("daily", "archive/daily").expect("a query must move");
+            assert_eq!(read_query("archive/daily"), Ok(Some("SELECT 1".into())));
+
+            assert!(rename_query_folder("reports", "reports/q1/inner").is_err());
+            assert!(rename_query_folder("reports", "archive").is_err());
+            rename_query_folder("reports", "old/reports").expect("a folder must move");
+            assert_eq!(saved_queries(), ["archive/daily", "old/reports/q1/sales"]);
+
+            delete_query_folder("old").expect("a folder must delete");
+            assert_eq!(saved_queries(), ["archive/daily"]);
+            assert_eq!(query_folders(), ["archive"]);
         });
     }
 

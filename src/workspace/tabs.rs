@@ -614,7 +614,12 @@ impl Workspace {
         if self.cancel_discard_close(cx) {
             return;
         }
-        if self.disarm_query_delete(cx) {
+        if self.library_name.is_some() {
+            self.drop_library_name();
+            cx.notify();
+            return;
+        }
+        if self.disarm_library_delete(cx) {
             return;
         }
         if self.close_import(cx) {

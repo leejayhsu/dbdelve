@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use gpui::{Animation, AnimationExt, StyledText, ease_out_quint};
+use gpui_component::Sizable;
 use gpui_component::checkbox::Checkbox;
 use gpui_component::menu::PopupMenuItem;
 
@@ -1998,6 +1999,7 @@ impl Workspace {
     /// The saved-query library, under the database's objects: one tree for
     /// every connection, opened into whichever is in front.
     pub(crate) fn render_library(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use crate::library::Naming;
         let t = *theme(cx);
         let workspace = cx.entity().downgrade();
         let menu_workspace = workspace.clone();
@@ -2005,29 +2007,51 @@ impl Workspace {
             .profile()
             .and_then(|profile| profile.session.open_query())
             .map(str::to_string);
-        let pending = self.pending_query_delete.clone();
-        let content = if self.library.is_empty() {
+        let pending = self.pending_library_delete.clone();
+        let library = self.library.clone();
+        let content = if self.library.is_empty() && self.library_folders.is_empty() {
             div()
                 .p(px(layout::SPACE_MD))
                 .text_size(px(layout::chrome(layout::TEXT_SM)))
                 .text_color(t.text_muted)
                 .child(
-                    "No saved queries yet. Save the query in front from its toolbar; \
-                     a name like reports/daily puts it in a folder.",
+                    "No saved queries yet. Save the query in front from its toolbar, \
+                     or make a query or folder from the buttons above; a name like \
+                     reports/daily puts it in a folder.",
                 )
                 .into_any_element()
         } else {
             render_tree(&self.library_tree, move |index, entry, _, _, cx| {
                 let t = *theme(cx);
-                let query = crate::library::query_of(&entry.item().id).map(str::to_string);
+                let id = entry.item().id.to_string();
+                let query = crate::library::query_of(&id).map(str::to_string);
                 let row_icon_path = match &query {
                     Some(_) => icon::SAVED_QUERY,
                     None if entry.is_expanded() => icon::CHEVRON_DOWN,
                     None => icon::CHEVRON_RIGHT,
                 };
                 let in_front = query.is_some() && query == open;
-                let armed = query.is_some() && query == pending;
+                let armed = pending.as_deref() == Some(id.as_str());
+                // An armed folder says what goes with it, since a folder's
+                // delete takes every query inside.
+                let armed_label = match crate::library::folder_of(&id) {
+                    Some(path) => {
+                        let prefix = format!("{path}/");
+                        match library
+                            .iter()
+                            .filter(|name| name.starts_with(&prefix))
+                            .count()
+                        {
+                            0 => "Delete?".to_string(),
+                            1 => "Delete 1 query?".to_string(),
+                            count => format!("Delete {count} queries?"),
+                        }
+                    }
+                    None => "Delete?".to_string(),
+                };
                 let group = format!("library-row-{index}");
+                let delete_workspace = workspace.clone();
+                let delete_id = id.clone();
                 let row = ListItem::new(index)
                     .mx(px(layout::SPACE_XS))
                     .rounded(px(layout::RADIUS_CONTROL))
@@ -2057,12 +2081,10 @@ impl Workspace {
                                     .whitespace_nowrap()
                                     .child(entry.item().label.clone()),
                             )
-                            .children(query.clone().map(|name| {
-                                let delete_workspace = workspace.clone();
-                                // Revealed by its own row, so the column reads
-                                // as names rather than a run of delete buttons;
-                                // armed, it says the word and takes the danger
-                                // fill.
+                            // Revealed by its own row, so the column reads as
+                            // names rather than a run of delete buttons; armed,
+                            // it says the word and takes the danger fill.
+                            .child(
                                 div()
                                     .flex_none()
                                     .when(!armed, |delete| {
@@ -2072,7 +2094,7 @@ impl Workspace {
                                     })
                                     .child(
                                         icon_button(
-                                            ("delete-library-query", index),
+                                            ("delete-library-row", index),
                                             icon::DELETE,
                                             if armed { Tone::Danger } else { Tone::Quiet },
                                             Control::Inline,
@@ -2081,27 +2103,31 @@ impl Workspace {
                                         .when(armed, |armed| {
                                             armed.w_auto().px(px(layout::SPACE_XS)).child(
                                                 button_label(
-                                                    "Delete?",
+                                                    armed_label,
                                                     Tone::Danger,
                                                     Control::Inline,
                                                     t,
                                                 ),
                                             )
                                         })
-                                        .tooltip("Delete query")
+                                        .tooltip(match &query {
+                                            Some(_) => "Delete query",
+                                            None => "Delete folder and everything in it",
+                                        })
                                         .on_click(
                                             move |_, _, cx| {
                                                 // Or the row underneath opens the
-                                                // query in the same click.
+                                                // query, or folds the folder, in the
+                                                // same click.
                                                 cx.stop_propagation();
                                                 _ = delete_workspace.update(cx, |workspace, cx| {
                                                     workspace
-                                                        .arm_delete_saved_query(name.clone(), cx);
+                                                        .arm_library_delete(delete_id.clone(), cx);
                                                 });
                                             },
                                         ),
-                                    )
-                            })),
+                                    ),
+                            ),
                     );
                 let Some(name) = query else {
                     return row;
@@ -2114,29 +2140,142 @@ impl Workspace {
                 })
             })
             .context_menu(move |_, entry, menu, _, _| {
-                let Some(name) = crate::library::query_of(&entry.item().id) else {
-                    return menu;
+                let id = entry.item().id.to_string();
+                let naming_item = |label: &'static str, naming: Naming, prefill: String| {
+                    let workspace = menu_workspace.clone();
+                    PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                        _ = workspace.update(cx, |workspace, cx| {
+                            workspace.start_library_naming(
+                                naming.clone(),
+                                prefill.clone(),
+                                window,
+                                cx,
+                            );
+                        });
+                    })
                 };
-                let (open_name, delete_name) = (name.to_string(), name.to_string());
-                let open_workspace = menu_workspace.clone();
+                let menu = match (
+                    crate::library::query_of(&id),
+                    crate::library::folder_of(&id),
+                ) {
+                    (Some(name), _) => {
+                        let open_name = name.to_string();
+                        let open_workspace = menu_workspace.clone();
+                        menu.item(PopupMenuItem::new("Open").on_click(move |_, window, cx| {
+                            _ = open_workspace.update(cx, |workspace, cx| {
+                                workspace.open_saved_query(open_name.clone(), window, cx);
+                            });
+                        }))
+                        .separator()
+                        .item(naming_item(
+                            "Rename…",
+                            Naming::RenameQuery(name.to_string()),
+                            name.to_string(),
+                        ))
+                    }
+                    (None, Some(path)) => menu
+                        .item(naming_item(
+                            "New Query…",
+                            Naming::NewQuery,
+                            format!("{path}/"),
+                        ))
+                        .item(naming_item(
+                            "New Folder…",
+                            Naming::NewFolder,
+                            format!("{path}/"),
+                        ))
+                        .separator()
+                        .item(naming_item(
+                            "Rename…",
+                            Naming::RenameFolder(path.to_string()),
+                            path.to_string(),
+                        )),
+                    (None, None) => return menu,
+                };
                 let delete_workspace = menu_workspace.clone();
-                menu.item(PopupMenuItem::new("Open").on_click(move |_, window, cx| {
-                    _ = open_workspace.update(cx, |workspace, cx| {
-                        workspace.open_saved_query(open_name.clone(), window, cx);
-                    });
-                }))
-                .separator()
                 // Arms the row's own delete rather than deleting: the menu is
                 // one click away from Open, and a deleted query does not come
                 // back.
-                .item(PopupMenuItem::new("Delete…").on_click(move |_, _, cx| {
-                    _ = delete_workspace.update(cx, |workspace, cx| {
-                        workspace.arm_delete_saved_query(delete_name.clone(), cx);
-                    });
-                }))
+                menu.separator()
+                    .item(PopupMenuItem::new("Delete…").on_click(move |_, _, cx| {
+                        _ = delete_workspace.update(cx, |workspace, cx| {
+                            workspace.arm_library_delete(id.clone(), cx);
+                        });
+                    }))
             })
             .into_any_element()
         };
+
+        let naming = self.library_name.as_ref().map(|(naming, input)| {
+            let confirm = cx.entity().downgrade();
+            let cancel = confirm.clone();
+            div()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap(px(layout::SPACE_XS))
+                .px(px(layout::SPACE_SM))
+                .py(px(layout::SPACE_XS))
+                .border_b_1()
+                .border_color(t.border)
+                .child(
+                    div()
+                        .text_size(px(layout::chrome(layout::TEXT_SM)))
+                        .text_color(t.text_muted)
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .child(naming.caption()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(layout::SPACE_XS))
+                        .child(Input::new(input).small().flex_1())
+                        .child(
+                            icon_button(
+                                "confirm-library-name",
+                                icon::CHECK,
+                                Tone::Primary,
+                                Control::Compact,
+                                t,
+                            )
+                            .tooltip(match naming {
+                                Naming::NewQuery => "Create query",
+                                Naming::NewFolder => "Create folder",
+                                Naming::RenameQuery(_) | Naming::RenameFolder(_) => "Rename",
+                            })
+                            .on_click(move |_, window, cx| {
+                                _ = confirm.update(cx, |workspace, cx| {
+                                    workspace.confirm_library_name(window, cx);
+                                });
+                            }),
+                        )
+                        .child(
+                            icon_button(
+                                "cancel-library-name",
+                                icon::CLOSE,
+                                Tone::Quiet,
+                                Control::Compact,
+                                t,
+                            )
+                            .tooltip("Cancel")
+                            .on_click(move |_, _, cx| {
+                                _ = cancel.update(cx, |workspace, cx| {
+                                    workspace.drop_library_name();
+                                    cx.notify();
+                                });
+                            }),
+                        ),
+                )
+        });
+        let header_button = |id: &'static str, path: &'static str, tooltip: &'static str| {
+            icon_button(id, path, Tone::Quiet, Control::Inline, t).tooltip(tooltip)
+        };
+        let new_query = cx.entity().downgrade();
+        let new_folder = new_query.clone();
+        let collapse = new_query.clone();
 
         div()
             .size_full()
@@ -2155,25 +2294,54 @@ impl Workspace {
                     .border_b_1()
                     .border_color(t.border)
                     .child(section_label(t, "Queries"))
-                    // Only while there is a folder to close: with none, the
-                    // button would be a control that does nothing.
-                    .children(self.library.iter().any(|name| name.contains('/')).then(|| {
-                        let workspace = cx.entity().downgrade();
-                        icon_button(
-                            "collapse-library",
-                            icon::COLLAPSE_ALL,
-                            Tone::Quiet,
-                            Control::Inline,
-                            t,
-                        )
-                        .tooltip("Collapse all folders")
-                        .on_click(move |_, _, cx| {
-                            _ = workspace.update(cx, |workspace, cx| {
-                                workspace.collapse_library(cx);
-                            });
-                        })
-                    })),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .child(
+                                header_button("new-library-query", icon::NEW_QUERY, "New query")
+                                    .on_click(move |_, window, cx| {
+                                        _ = new_query.update(cx, |workspace, cx| {
+                                            workspace.start_library_naming(
+                                                Naming::NewQuery,
+                                                String::new(),
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }),
+                            )
+                            .child(
+                                header_button("new-library-folder", icon::NEW_FOLDER, "New folder")
+                                    .on_click(move |_, window, cx| {
+                                        _ = new_folder.update(cx, |workspace, cx| {
+                                            workspace.start_library_naming(
+                                                Naming::NewFolder,
+                                                String::new(),
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }),
+                            )
+                            // Only while there is a folder to close: with
+                            // none, the button would be a control that does
+                            // nothing.
+                            .children((!self.library_folders.is_empty()).then(|| {
+                                header_button(
+                                    "collapse-library",
+                                    icon::COLLAPSE_ALL,
+                                    "Collapse all folders",
+                                )
+                                .on_click(move |_, _, cx| {
+                                    _ = collapse.update(cx, |workspace, cx| {
+                                        workspace.collapse_library(cx);
+                                    });
+                                })
+                            })),
+                    ),
             )
+            .children(naming)
             .child(div().flex_1().min_h_0().child(content))
     }
 }
