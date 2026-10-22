@@ -245,6 +245,9 @@ pub(crate) struct Workspace {
     /// Whether the explorer column is folded away. Not persisted: a hidden
     /// sidebar is a thing done for the next minute, not a preference.
     pub(crate) sidebar_hidden: bool,
+    /// Tracked on the sidebar's column, so folding it can tell whether the
+    /// focus is about to go with it.
+    pub(crate) sidebar_focus: FocusHandle,
     /// Zoom over each font size, as a percentage. Not persisted: the sizes in
     /// Settings are the preference, and a zoom is for the next screen share
     /// or the one wide cell, with ⌘0 the way back.
@@ -439,6 +442,7 @@ impl Workspace {
             palette_from_settings: false,
             rebinding: None,
             sidebar_hidden: false,
+            sidebar_focus: cx.focus_handle(),
             chrome_zoom: 100,
             editor_zoom: 100,
             grid_zoom: 100,
@@ -1990,6 +1994,7 @@ impl Render for Workspace {
                         .size_range(px(layout::SIDEBAR_MIN_WIDTH)..px(layout::SIDEBAR_MAX_WIDTH))
                         .child(
                             div()
+                                .track_focus(&self.sidebar_focus)
                                 .size_full()
                                 .flex()
                                 .flex_col()

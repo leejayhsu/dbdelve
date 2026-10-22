@@ -13,9 +13,15 @@ impl Workspace {
     pub(crate) fn toggle_sidebar(
         &mut self,
         _: &ToggleSidebar,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A field or tree in the sidebar holding focus is unmounted with it,
+        // and a window focused on nothing drops every keystroke -- this
+        // binding's next press included, so the sidebar could not come back.
+        if !self.sidebar_hidden && self.sidebar_focus.contains_focused(window, cx) {
+            self.refocus_front();
+        }
         self.sidebar_hidden = !self.sidebar_hidden;
         cx.notify();
     }
