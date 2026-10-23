@@ -117,7 +117,10 @@ registry! {
     ("explain_query", "Explain Query", None, ["secondary-shift-enter"], ExplainQuery { mode: ExplainMode::Plan }),
     ("format_query", "Format Query", None, ["secondary-shift-f"], FormatQuery),
     ("apply_edits", "Apply Edits", None, ["secondary-s"], ApplyEdits),
-    ("rename_query_tab", "Rename Query Tab", None, ["secondary-k s"], SaveQuery),
+    // No default chord: `secondary-k` alone is Go to Object, and a stroke
+    // that also begins a chord waits a second for the next key before it
+    // fires. Still in the command palette, and still rebindable.
+    ("rename_query_tab", "Rename Query Tab", None, [], SaveQuery),
     ("new_query", "New Query Tab", None, ["secondary-t"], NewQuery),
     ("new_connection", "New Connection", None, ["secondary-shift-n"], NewConnection),
     ("new_project", "New Project", None, [], NewProject),
@@ -131,12 +134,13 @@ registry! {
     ("show_editor", "Dismiss", None, ["escape"], ShowEditor),
     // Still keyed by the id of the cycle this replaced, so an override saved
     // against it keeps working.
-    ("cycle_theme", "Select Theme", None, ["secondary-k t"], SelectTheme),
-    ("select_database", "Select Database", None, ["secondary-k d"], SelectDatabase),
+    ("cycle_theme", "Select Theme", None, [], SelectTheme),
+    ("select_database", "Select Database", None, [], SelectDatabase),
     ("open_settings", "Open Settings", None, ["secondary-,"], OpenSettings),
     // Keyed by the id it had as a search across everything, so an override
-    // saved against it keeps working.
-    ("fuzzy_open", "Go to Object", None, ["secondary-p"], FuzzyOpen),
+    // saved against it keeps working. `secondary-k` beside `secondary-p`,
+    // where a table is reached for most.
+    ("fuzzy_open", "Go to Object", None, ["secondary-p", "secondary-k"], FuzzyOpen),
     ("go_to_column", "Go to Column", None, ["secondary-shift-o"], GoToColumn),
     ("command_palette", "Command Palette", None, ["secondary-shift-p"], CommandPalette),
     ("switch_connection", "Switch Connection", None, [], SwitchConnection),
