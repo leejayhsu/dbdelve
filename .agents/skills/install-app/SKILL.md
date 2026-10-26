@@ -50,7 +50,12 @@ rather than going quiet.
 - The release app and the dev app (`DBDelve Dev.app`) keep separate
   connections and Keychain passwords, so connections made in one don't appear
   in the other.
-- macOS may ask for Keychain access again after each install. That stops if
-  they create the signing certificate once with `dev/identity.sh`.
+- macOS asks for each saved password again after each install unless the app
+  is signed with an Apple Development certificate, which the script uses
+  automatically when one is in the Keychain. Making one is free: Xcode →
+  Settings → Accounts, add an Apple ID, Manage Certificates, + → Apple
+  Development. `dev/identity.sh`'s self-signed certificate is not enough on
+  its own: it has no Team ID, so each build still lands in a Keychain
+  partition of its own and prompts.
 - No quarantine step is needed: macOS only quarantines downloaded apps, and
   this one was built locally.

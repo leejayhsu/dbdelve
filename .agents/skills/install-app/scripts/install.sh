@@ -32,6 +32,17 @@ if [[ "${1:-}" != --install-only ]]; then
   xcrun metal --version >/dev/null 2>&1 ||
     fail 2 "The Metal toolchain is missing: run xcodebuild -downloadComponent MetalToolchain (and sudo xcodebuild -runFirstLaunch first if that fails to load a plug-in)."
 
+  # A self-signed identity keeps the Keychain's trusted-app check stable, but
+  # with no Team ID each build lands in a partition of its own (cdhash:…), so
+  # every saved password asks again after every install. An Apple Development
+  # certificate carries a Team ID, and the partition follows the team instead.
+  # Picked by hash, since a renewed certificate leaves two under one name.
+  if [[ -z "${DBDELVE_SIGN_ID:-}" ]]; then
+    DBDELVE_SIGN_ID="$(security find-identity -v -p codesigning |
+      awk '/"Apple Development: / { print $2; exit }')"
+    [[ -n "$DBDELVE_SIGN_ID" ]] && export DBDELVE_SIGN_ID
+  fi
+
   (cd "$ROOT" && DBDELVE_CHANNEL=release dev/bundle.sh)
 fi
 
